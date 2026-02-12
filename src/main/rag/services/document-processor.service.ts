@@ -14,8 +14,14 @@ import {
   DocumentChunkDocument,
 } from '@/lib/database/schemas/document-chunk.schema';
 import { EmbeddingService } from './embedding.service';
-import { successResponse, successPaginatedResponse } from '@/common/utils/response.util';
-import type { TResponse, TPaginatedResponse } from '@/common/utils/response.util';
+import {
+  successResponse,
+  successPaginatedResponse,
+} from '@/common/utils/response.util';
+import type {
+  TResponse,
+  TPaginatedResponse,
+} from '@/common/utils/response.util';
 import type { PaginationDto } from '@/common/dto/pagination.dto';
 
 @Injectable()
@@ -79,7 +85,10 @@ export class DocumentProcessorService {
         `Processed document ${document.filename} with ${chunks.length} chunks`,
       );
 
-      return successResponse(document, 'Document uploaded and processing started');
+      return successResponse(
+        document,
+        'Document uploaded and processing started',
+      );
     } catch (error) {
       this.logger.error('Failed to process document', error);
       document.status = 'failed';

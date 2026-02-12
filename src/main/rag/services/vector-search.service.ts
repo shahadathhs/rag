@@ -30,26 +30,28 @@ export class VectorSearchService {
     userId: string,
     limit = 5,
   ): Promise<SearchResult[]> {
-      const queryEmbedding =
-        await this.embeddingService.generateEmbedding(query);
+    const queryEmbedding = await this.embeddingService.generateEmbedding(query);
 
-      this.logger.debug('Query embedding generated', JSON.stringify(queryEmbedding));
+    this.logger.debug(
+      'Query embedding generated',
+      JSON.stringify(queryEmbedding),
+    );
 
-      const chunks = await this.chunkModel
-        .find({ userId: new Types.ObjectId(userId) })
-        .populate('documentId')
-        .lean();
+    const chunks = await this.chunkModel
+      .find({ userId: new Types.ObjectId(userId) })
+      .populate('documentId')
+      .lean();
 
-      this.logger.debug('Chunks found', JSON.stringify(chunks));
+    this.logger.debug('Chunks found', JSON.stringify(chunks));
 
-      const results: SearchResult[] = chunks.map((chunk) => ({
-        chunk: chunk as DocumentChunkDocument,
-        score: this.cosineSimilarity(queryEmbedding, chunk.embedding),
-      }));
+    const results: SearchResult[] = chunks.map((chunk) => ({
+      chunk: chunk as DocumentChunkDocument,
+      score: this.cosineSimilarity(queryEmbedding, chunk.embedding),
+    }));
 
-      this.logger.debug('Results found', JSON.stringify(results));
+    this.logger.debug('Results found', JSON.stringify(results));
 
-      return results.sort((a, b) => b.score - a.score).slice(0, limit);
+    return results.sort((a, b) => b.score - a.score).slice(0, limit);
   }
 
   @HandleError('Error searching in documents', 'documentIds')
@@ -58,38 +60,37 @@ export class VectorSearchService {
     documentIds: string[],
     limit = 5,
   ): Promise<SearchResult[]> {
-      if (documentIds.length === 0) {
-        return [];
-      }
+    if (documentIds.length === 0) {
+      return [];
+    }
 
-      const queryEmbedding =
-        await this.embeddingService.generateEmbedding(query);
+    const queryEmbedding = await this.embeddingService.generateEmbedding(query);
 
-      this.logger.debug('Query embedding generated');
+    this.logger.debug('Query embedding generated');
 
-      const objectIds = documentIds.map((id) => new Types.ObjectId(id));
-      const chunks = await this.chunkModel
-        .find({ documentId: { $in: objectIds } })
-        .populate('documentId')
-        .lean();
+    const objectIds = documentIds.map((id) => new Types.ObjectId(id));
+    const chunks = await this.chunkModel
+      .find({ documentId: { $in: objectIds } })
+      .populate('documentId')
+      .lean();
 
-      this.logger.debug('Chunks found');
+    this.logger.debug('Chunks found');
 
-      if (chunks.length === 0) {
-        this.logger.warn(
-          `No chunks found for documentIds: ${documentIds.join(', ')}`,
-        );
-        return [];
-      }
+    if (chunks.length === 0) {
+      this.logger.warn(
+        `No chunks found for documentIds: ${documentIds.join(', ')}`,
+      );
+      return [];
+    }
 
-      const results: SearchResult[] = chunks.map((chunk) => ({
-        chunk: chunk as DocumentChunkDocument,
-        score: this.cosineSimilarity(queryEmbedding, chunk.embedding),
-      }));
+    const results: SearchResult[] = chunks.map((chunk) => ({
+      chunk: chunk as DocumentChunkDocument,
+      score: this.cosineSimilarity(queryEmbedding, chunk.embedding),
+    }));
 
-      this.logger.debug('Results found');
+    this.logger.debug('Results found');
 
-      return results.sort((a, b) => b.score - a.score).slice(0, limit);
+    return results.sort((a, b) => b.score - a.score).slice(0, limit);
   }
 
   private cosineSimilarity(a: number[], b: number[]): number {

@@ -13,8 +13,14 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { OllamaService } from './ollama.service';
 import { VectorSearchService } from './vector-search.service';
-import { successResponse, successPaginatedResponse } from '@/common/utils/response.util';
-import type { TResponse, TPaginatedResponse } from '@/common/utils/response.util';
+import {
+  successResponse,
+  successPaginatedResponse,
+} from '@/common/utils/response.util';
+import type {
+  TResponse,
+  TPaginatedResponse,
+} from '@/common/utils/response.util';
 import type { PaginationDto } from '@/common/dto/pagination.dto';
 
 @Injectable()
@@ -170,10 +176,7 @@ export class RagChatService {
           )
         : await this.vectorSearch.searchSimilarChunks(message, userId, limit);
 
-    if (
-      searchResults.length === 0 &&
-      conversation.documentIds.length > 0
-    ) {
+    if (searchResults.length === 0 && conversation.documentIds.length > 0) {
       searchResults = await this.vectorSearch.searchSimilarChunks(
         message,
         userId,
@@ -186,7 +189,7 @@ export class RagChatService {
   private assemblePrompt(userMessage: string, context: string): string {
     const contextBlock = context.trim()
       ? `Context from the user's documents:\n${context}`
-      : 'No relevant passages were found in the user\'s uploaded documents.';
+      : "No relevant passages were found in the user's uploaded documents.";
     return `You are a helpful assistant. Answer based only on the following. If there is no relevant context, say clearly that you could not find relevant information in the provided documents and suggest the user upload or check their documents.
 
 ${contextBlock}

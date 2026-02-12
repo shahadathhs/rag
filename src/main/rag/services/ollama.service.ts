@@ -22,9 +22,7 @@ export class OllamaService {
   private readonly model: string;
 
   constructor(private readonly configService: ConfigService) {
-    this.baseUrl = this.configService.getOrThrow<string>(
-      'OLLAMA_BASE_URL',
-    );
+    this.baseUrl = this.configService.getOrThrow<string>('OLLAMA_BASE_URL');
     this.model = this.configService.getOrThrow<string>('OLLAMA_MODEL');
   }
 
@@ -49,7 +47,9 @@ export class OllamaService {
       const data: OllamaResponse = await response.json();
       return data.response;
     } catch (error) {
-      const err = error as NodeJS.ErrnoException & { cause?: { code?: string } };
+      const err = error as NodeJS.ErrnoException & {
+        cause?: { code?: string };
+      };
       const isRefused =
         err?.cause?.code === 'ECONNREFUSED' || err?.code === 'ECONNREFUSED';
       if (isRefused) {
@@ -111,7 +111,9 @@ export class OllamaService {
         }
       }
     } catch (error) {
-      const err = error as NodeJS.ErrnoException & { cause?: { code?: string } };
+      const err = error as NodeJS.ErrnoException & {
+        cause?: { code?: string };
+      };
       const isRefused =
         err?.cause?.code === 'ECONNREFUSED' || err?.code === 'ECONNREFUSED';
       if (isRefused) {

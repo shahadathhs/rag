@@ -1,6 +1,8 @@
 import { simplifyError } from './handle-error.simplify';
 
-type AsyncMethod = (...args: unknown[]) => Promise<unknown> | AsyncGenerator<unknown>;
+type AsyncMethod = (
+  ...args: unknown[]
+) => Promise<unknown> | AsyncGenerator<unknown>;
 
 export function HandleError(customMessage?: string, record?: string) {
   return function <T>(

@@ -8,7 +8,12 @@ import {
   UseGuards,
   Sse,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { Observable } from 'rxjs';
 import { JwtAuthGuard } from '@/core/jwt/jwt.guard';
 import { GetUser } from '@/core/jwt/jwt.decorator';
@@ -33,11 +38,7 @@ export class ChatController {
     @Body() dto: CreateConversationDto,
     @GetUser('sub') userId: string,
   ) {
-    return this.ragChat.createConversation(
-      userId,
-      dto.title,
-      dto.documentIds,
-    );
+    return this.ragChat.createConversation(userId, dto.title, dto.documentIds);
   }
 
   @ApiOperation({ summary: 'Get all conversations' })

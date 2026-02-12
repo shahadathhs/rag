@@ -7,7 +7,10 @@ export class CreateConversationDto {
   @IsString()
   title: string;
 
-  @ApiPropertyOptional({ example: [], description: 'Optional document IDs to scope the conversation' })
+  @ApiPropertyOptional({
+    example: [],
+    description: 'Optional document IDs to scope the conversation',
+  })
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
