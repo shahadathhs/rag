@@ -113,7 +113,7 @@ sequenceDiagram
 5. **Embedding Generation**
    - Each chunk sent to `EmbeddingService`
    - `all-MiniLM-L6-v2` model generates 384-d vector
-   - Runs locally via `@xenova/transformers`
+   - Runs locally via `@huggingface/transformers`
 
 6. **Chunk Storage**
    - Each chunk saved to `DocumentChunk` collection
@@ -163,19 +163,22 @@ sequenceDiagram
 
     RC->>DB: Save user message
 
-    RC->>RC: retrieveContext(conversation, message, userId)
-    Note over RC: documentIds set → searchInDocuments<br/>else → searchSimilarChunks<br/>limit=8; fallback to user chunks if 0
+    RC->>RC: retrieveContext(...)
+    Note over RC: If documentIds exist → searchInDocuments
+    Note over RC: Else → searchSimilarChunks
+    Note over RC: limit = 8, fallback to user chunks if 0 results
 
     RC->>VS: searchInDocuments or searchSimilarChunks
     VS->>ES: generateEmbedding(message)
     ES-->>VS: Query vector (384-d)
-    VS->>DB: Get chunks (by documentIds or userId, ObjectId)
+    VS->>DB: Get chunks (by documentIds or userId)
     DB-->>VS: Chunks with embeddings
-    VS->>VS: Cosine similarity, sort, top 8
+    VS->>VS: Cosine similarity + ranking
     VS-->>RC: Top 8 relevant chunks
 
-    RC->>RC: Assemble prompt with context
-    Note over RC: If no context: "No relevant passages found..."<br/>Else: context + user question
+    RC->>RC: Assemble prompt
+    Note over RC: If no context → fallback system message
+    Note over RC: Else → context + user question
 
     RC->>Ollama: generateResponse(prompt)
     Ollama-->>RC: Generated response
@@ -184,7 +187,7 @@ sequenceDiagram
     RC->>DB: Update conversation stats
 
     RC-->>API: successResponse({ response, sources })
-    API-->>User: { success, message, data }
+    API-->>User: JSON response
 ```
 
 ### Step-by-Step Process
