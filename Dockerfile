@@ -7,8 +7,13 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies for build
-RUN apt update && apt install -y
+# Install system dependencies for build (required for native modules like sharp)
+RUN apt update && apt install -y \
+    build-essential \
+    python3 \
+    python3-pip \
+    libvips-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy package, lock file
 COPY package.json pnpm-lock.yaml ./
@@ -31,16 +36,17 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies needed at runtime
-RUN apt update && apt install -y curl
+# Install system dependencies needed at runtime (libvips for sharp)
+RUN apt update && apt install -y \
+    curl \
+    libvips42 \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy necessary files from builder stage
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/pnpm-lock.yaml ./pnpm-lock.yaml
 COPY --from=builder /app/dist ./dist
-
-# Install dependencies
-RUN pnpm install --frozen-lockfile
+COPY --from=builder /app/node_modules ./node_modules
 
 # Expose the port
 EXPOSE 3000

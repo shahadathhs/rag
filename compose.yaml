@@ -1,7 +1,11 @@
 services:
   api:
-    platform: linux/amd64
-    image: ${DOCKER_USERNAME}/${PACKAGE_NAME}:${PACKAGE_VERSION}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - PACKAGE_NAME=${PACKAGE_NAME}
+        - PACKAGE_VERSION=${PACKAGE_VERSION}
     container_name: ${PACKAGE_NAME}_api
     restart: always
     env_file:
