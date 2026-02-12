@@ -53,21 +53,14 @@ export class RagChatService {
       content: message,
     });
 
-    // Retrieve relevant context
-    const searchResults =
-      conversation.documentIds.length > 0
-        ? await this.vectorSearch.searchInDocuments(
-            message,
-            conversation.documentIds.map((id) => id.toString()),
-            5,
-          )
-        : await this.vectorSearch.searchSimilarChunks(message, userId, 5);
-
-    // Assemble prompt with context
+    const searchResults = await this.retrieveContext(
+      conversation,
+      message,
+      userId,
+    );
     const context = searchResults.map((r) => r.chunk.content).join('\n\n');
     const prompt = this.assemblePrompt(message, context);
 
-    // Generate response
     const response = await this.ollama.generateResponse(prompt);
 
     // Save assistant message
@@ -127,16 +120,11 @@ export class RagChatService {
       content: message,
     });
 
-    // Retrieve relevant context
-    const searchResults =
-      conversation.documentIds.length > 0
-        ? await this.vectorSearch.searchInDocuments(
-            message,
-            conversation.documentIds.map((id) => id.toString()),
-            5,
-          )
-        : await this.vectorSearch.searchSimilarChunks(message, userId, 5);
-
+    const searchResults = await this.retrieveContext(
+      conversation,
+      message,
+      userId,
+    );
     const context = searchResults.map((r) => r.chunk.content).join('\n\n');
     const prompt = this.assemblePrompt(message, context);
 
@@ -167,15 +155,45 @@ export class RagChatService {
     );
   }
 
+  private async retrieveContext(
+    conversation: ConversationDocument,
+    message: string,
+    userId: string,
+  ): Promise<Array<{ chunk: any; score: number }>> {
+    const limit = 8;
+    let searchResults =
+      conversation.documentIds.length > 0
+        ? await this.vectorSearch.searchInDocuments(
+            message,
+            conversation.documentIds.map((id) => id.toString()),
+            limit,
+          )
+        : await this.vectorSearch.searchSimilarChunks(message, userId, limit);
+
+    if (
+      searchResults.length === 0 &&
+      conversation.documentIds.length > 0
+    ) {
+      searchResults = await this.vectorSearch.searchSimilarChunks(
+        message,
+        userId,
+        limit,
+      );
+    }
+    return searchResults;
+  }
+
   private assemblePrompt(userMessage: string, context: string): string {
-    return `You are a helpful assistant. Use the following context to answer the user's question. If the context doesn't contain relevant information, say so.
+    const contextBlock = context.trim()
+      ? `Context from the user's documents:\n${context}`
+      : 'No relevant passages were found in the user\'s uploaded documents.';
+    return `You are a helpful assistant. Answer based only on the following. If there is no relevant context, say clearly that you could not find relevant information in the provided documents and suggest the user upload or check their documents.
 
-Context:
-${context}
+${contextBlock}
 
-User Question: ${userMessage}
+User question: ${userMessage}
 
-Answer:`;
+Answer (based on the context above, or say you found nothing relevant):`;
   }
 
   async createConversation(
