@@ -1,4 +1,4 @@
-name: Lint, Format, Build, Docker & Deploy
+name: Lint, Format & Build
 
 on:
   push:

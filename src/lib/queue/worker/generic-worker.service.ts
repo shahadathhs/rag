@@ -4,7 +4,6 @@ import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { GenericPayload } from '../interface/generic.payload';
-import { NotificationPayload } from '../interface/queue.payload';
 import { QueueGateway } from '../queue.gateway';
 
 @Processor(QueueName.GENERIC, { concurrency: 5 })
@@ -24,8 +23,8 @@ export class GenericWorkerService extends WorkerHost {
       // ✅ Replace with actual job logic in specific projects
       // e.g., sync, update, external API call, etc.
 
-      // Generic admin notification
-      const notification: NotificationPayload = {
+      // Generic notification
+      const notification = {
         type: QueueEventsEnum.NOTIFICATION,
         title: `Job completed: ${admin.name}`,
         message,
@@ -37,7 +36,8 @@ export class GenericWorkerService extends WorkerHost {
         },
       };
 
-      await this.gateway.emitToAdmins(
+      await this.gateway.emitToUser(
+        adminId,
         QueueEventsEnum.NOTIFICATION,
         notification,
       );

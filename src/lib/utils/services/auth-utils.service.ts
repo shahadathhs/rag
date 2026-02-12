@@ -1,15 +1,10 @@
 import { UserResponseDto } from '@/common/dto/user-response.dto';
 import { ENVEnum } from '@/common/enum/env.enum';
 import { JWTPayload, TokenPair } from '@/core/jwt/jwt.interface';
-import { OtpType } from '@/lib/database/enums';
 import {
   RefreshToken,
   RefreshTokenDocument,
 } from '@/lib/database/schemas/refresh-token.schema';
-import {
-  UserOtp,
-  UserOtpDocument,
-} from '@/lib/database/schemas/user-otp.schema';
 import { User, UserDocument } from '@/lib/database/schemas/user.schema';
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -17,7 +12,7 @@ import { JwtService } from '@nestjs/jwt';
 import { InjectModel } from '@nestjs/mongoose';
 import * as bcrypt from 'bcrypt';
 import { plainToInstance } from 'class-transformer';
-import { randomBytes, randomInt } from 'crypto';
+import { randomBytes } from 'crypto';
 import { Model } from 'mongoose';
 
 @Injectable()
@@ -32,8 +27,6 @@ export class AuthUtilsService {
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     @InjectModel(RefreshToken.name)
     private readonly refreshTokenModel: Model<RefreshTokenDocument>,
-    @InjectModel(UserOtp.name)
-    private readonly userOtpModel: Model<UserOtpDocument>,
   ) {}
 
   async sanitizeUser<T = UserResponseDto>(user: any): Promise<T> {
@@ -124,24 +117,6 @@ export class AuthUtilsService {
 
   async findRefreshToken(token: string) {
     return this.refreshTokenModel.findOne({ token });
-  }
-
-  generateOtpAndExpiry(minutes = 5): { otp: number; expiryTime: Date } {
-    const otp = randomInt(1000, 10000);
-    const expiryTime = new Date(Date.now() + minutes * 60 * 1000);
-    return { otp, expiryTime };
-  }
-
-  async generateOTPAndSave(userId: string, type: OtpType) {
-    const { otp, expiryTime } = this.generateOtpAndExpiry();
-    const hashedOtp = await this.hash(otp.toString());
-    await this.userOtpModel.create({
-      userId,
-      code: hashedOtp,
-      type,
-      expiresAt: expiryTime,
-    });
-    return otp;
   }
 
   async getSanitizedUserById(id: string) {

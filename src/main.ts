@@ -4,7 +4,6 @@ import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import * as bodyParser from 'body-parser';
 import { AppModule } from './app.module';
 import { ENVEnum } from './common/enum/env.enum';
 import { AllExceptionsFilter } from './core/filter/http-exception.filter';
@@ -34,8 +33,8 @@ async function bootstrap() {
 
   // * Swagger config with Bearer Auth
   const config = new DocumentBuilder()
-    .setTitle('Backend API')
-    .setDescription('The API description')
+    .setTitle('RAG API')
+    .setDescription('The RAG API description')
     .setVersion('1.0')
     .addBearerAuth()
     .build();
@@ -46,12 +45,6 @@ async function bootstrap() {
       persistAuthorization: true,
     },
   });
-
-  // * add body parser
-  app.use(
-    '/path-to-stripe-webhook',
-    bodyParser.raw({ type: 'application/json' }),
-  );
 
   // * set port
   const port = parseInt(configService.get<string>(ENVEnum.PORT) ?? '3000', 10);

@@ -1,9 +1,7 @@
 import { successResponse, TResponse } from '@/common/utils/response.util';
 import { AppError } from '@/core/error/handle-error.app';
 import { HandleError } from '@/core/error/handle-error.decorator';
-import { OtpType } from '@/lib/database/enums';
 import { User, UserDocument } from '@/lib/database/schemas/user.schema';
-import { AuthMailService } from '@/lib/mail/services/auth-mail.service';
 import { AuthUtilsService } from '@/lib/utils/services/auth-utils.service';
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -14,7 +12,6 @@ import { LoginDto } from '../dto/login.dto';
 export class AuthLoginService {
   constructor(
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
-    private readonly authMailService: AuthMailService,
     private readonly utils: AuthUtilsService,
   ) {}
 
@@ -32,25 +29,7 @@ export class AuthLoginService {
       throw new AppError(400, 'Invalid password');
     }
 
-    // 1. Email verification
-    if (!user.isVerified) {
-      const otp = await this.utils.generateOTPAndSave(
-        user._id,
-        OtpType.VERIFICATION,
-      );
-
-      await this.authMailService.sendVerificationCodeEmail(
-        user.email,
-        otp.toString(),
-      );
-
-      return successResponse(
-        { email: user.email },
-        'Your email is not verified. A new OTP has been sent to your email.',
-      );
-    }
-
-    // 2. Regular login
+    // Update last login and active timestamps
     const updatedUser = await this.userModel.findOneAndUpdate(
       { email },
       {
@@ -64,7 +43,7 @@ export class AuthLoginService {
       throw new AppError(404, 'User not found');
     }
 
-    // 3. Generate token
+    // Generate token
     const token = await this.utils.generateTokenPairAndSave({
       email,
       role: updatedUser.role,
