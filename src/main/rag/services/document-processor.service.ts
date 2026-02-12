@@ -1,9 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import pdfParse from 'pdf-parse';
+import { PDFParse } from 'pdf-parse';
 import * as mammoth from 'mammoth';
 import {
   Document,
@@ -14,6 +14,9 @@ import {
   DocumentChunkDocument,
 } from '@/lib/database/schemas/document-chunk.schema';
 import { EmbeddingService } from './embedding.service';
+import { successResponse, successPaginatedResponse } from '@/common/utils/response.util';
+import type { TResponse, TPaginatedResponse } from '@/common/utils/response.util';
+import type { PaginationDto } from '@/common/dto/pagination.dto';
 
 @Injectable()
 export class DocumentProcessorService {
@@ -32,9 +35,9 @@ export class DocumentProcessorService {
   async processDocument(
     file: Express.Multer.File,
     userId: string,
-  ): Promise<DocumentDocument> {
+  ): Promise<TResponse<DocumentDocument>> {
     const document = await this.documentModel.create({
-      userId,
+      userId: new Types.ObjectId(userId),
       filename: file.filename,
       originalName: file.originalname,
       fileType: this.getFileType(file.originalname),
@@ -59,7 +62,7 @@ export class DocumentProcessorService {
 
         await this.chunkModel.create({
           documentId: document._id,
-          userId,
+          userId: new Types.ObjectId(userId),
           content: chunks[i],
           embedding,
           chunkIndex: i,
@@ -76,7 +79,7 @@ export class DocumentProcessorService {
         `Processed document ${document.filename} with ${chunks.length} chunks`,
       );
 
-      return document;
+      return successResponse(document, 'Document uploaded and processing started');
     } catch (error) {
       this.logger.error('Failed to process document', error);
       document.status = 'failed';
@@ -84,6 +87,31 @@ export class DocumentProcessorService {
       await document.save();
       throw error;
     }
+  }
+
+  async getMyDocuments(
+    userId: string,
+    pagination: PaginationDto,
+  ): Promise<TPaginatedResponse<DocumentDocument>> {
+    const page = pagination.page ?? 1;
+    const limit = pagination.limit ?? 10;
+    const skip = (page - 1) * limit;
+
+    const [data, total] = await Promise.all([
+      this.documentModel
+        .find({ userId: new Types.ObjectId(userId) })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .exec(),
+      this.documentModel.countDocuments({ userId: new Types.ObjectId(userId) }),
+    ]);
+
+    return successPaginatedResponse(
+      data,
+      { page, limit, total },
+      'Documents retrieved',
+    );
   }
 
   private async extractText(
@@ -94,7 +122,15 @@ export class DocumentProcessorService {
 
     switch (fileType) {
       case 'pdf': {
-        const pdfData = await (pdfParse as any)(buffer);
+        // Convert Node Buffer to Uint8Array
+        const uint8Array = new Uint8Array(buffer);
+
+        // Create parser instance
+        const parser = new PDFParse(uint8Array);
+
+        // Extract text
+        const pdfData = await parser.getText();
+
         return pdfData.text;
       }
 
@@ -134,10 +170,13 @@ export class DocumentProcessorService {
     throw new Error(`Unsupported file extension: ${ext}`);
   }
 
-  async deleteDocument(documentId: string, userId: string): Promise<void> {
+  async deleteDocument(
+    documentId: string,
+    userId: string,
+  ): Promise<TResponse<null>> {
     const document = await this.documentModel.findOne({
-      _id: documentId,
-      userId,
+      _id: new Types.ObjectId(documentId),
+      userId: new Types.ObjectId(userId),
     });
 
     if (!document) {
@@ -152,11 +191,12 @@ export class DocumentProcessorService {
     }
 
     // Delete chunks
-    await this.chunkModel.deleteMany({ documentId });
+    await this.chunkModel.deleteMany({ documentId: document._id });
 
     // Delete document
-    await this.documentModel.deleteOne({ _id: documentId });
+    await this.documentModel.deleteOne({ _id: document._id });
 
     this.logger.log(`Deleted document ${documentId}`);
+    return successResponse(null, 'Document deleted successfully');
   }
 }

@@ -1,24 +1,22 @@
 import {
   Controller,
+  Get,
   Post,
   Delete,
   Param,
+  Query,
   UseInterceptors,
   UploadedFile,
   UseGuards,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import {
-  ApiTags,
-  ApiOperation,
-  ApiBearerAuth,
-  ApiConsumes,
-} from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import { diskStorage } from 'multer';
 import { JwtAuthGuard } from '@/core/jwt/jwt.guard';
 import { GetUser } from '@/core/jwt/jwt.decorator';
-import { successResponse } from '@/common/utils/response.util';
 import { DocumentProcessorService } from '../services/document-processor.service';
+import { UploadDocumentDto } from '../dto/documents.dto';
+import { PaginationDto } from '@/common/dto/pagination.dto';
 
 const multerOptions = {
   storage: diskStorage({
@@ -39,17 +37,23 @@ export class DocumentsController {
 
   @ApiOperation({ summary: 'Upload and process document' })
   @ApiConsumes('multipart/form-data')
+  @ApiBody({ type: UploadDocumentDto })
   @Post()
   @UseInterceptors(FileInterceptor('file', multerOptions))
   async uploadDocument(
     @UploadedFile() file: Express.Multer.File,
     @GetUser('sub') userId: string,
   ) {
-    const document = await this.documentProcessor.processDocument(file, userId);
-    return successResponse(
-      document,
-      'Document uploaded and processing started',
-    );
+    return this.documentProcessor.processDocument(file, userId);
+  }
+
+  @ApiOperation({ summary: 'Get my uploaded documents' })
+  @Get()
+  async getMyDocuments(
+    @GetUser('sub') userId: string,
+    @Query() pagination: PaginationDto,
+  ) {
+    return this.documentProcessor.getMyDocuments(userId, pagination);
   }
 
   @ApiOperation({ summary: 'Delete document' })
@@ -58,7 +62,6 @@ export class DocumentsController {
     @Param('id') documentId: string,
     @GetUser('sub') userId: string,
   ) {
-    await this.documentProcessor.deleteDocument(documentId, userId);
-    return successResponse(null, 'Document deleted successfully');
+    return this.documentProcessor.deleteDocument(documentId, userId);
   }
 }

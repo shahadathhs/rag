@@ -4,16 +4,17 @@ import {
   Get,
   Body,
   Param,
+  Query,
   UseGuards,
   Sse,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { Observable } from 'rxjs';
 import { JwtAuthGuard } from '@/core/jwt/jwt.guard';
 import { GetUser } from '@/core/jwt/jwt.decorator';
-import { successResponse } from '@/common/utils/response.util';
 import { RagChatService } from '../services/rag-chat.service';
-import { CreateConversationDto, ChatMessageDto } from '../dto/rag.dto';
+import { CreateConversationDto, SendMessageDto } from '../dto/rag.dto';
+import { PaginationDto } from '@/common/dto/pagination.dto';
 
 interface MessageEvent {
   data: string;
@@ -32,19 +33,20 @@ export class ChatController {
     @Body() dto: CreateConversationDto,
     @GetUser('sub') userId: string,
   ) {
-    const conversation = await this.ragChat.createConversation(
+    return this.ragChat.createConversation(
       userId,
       dto.title,
       dto.documentIds,
     );
-    return successResponse(conversation, 'Conversation created');
   }
 
   @ApiOperation({ summary: 'Get all conversations' })
   @Get('conversations')
-  async getConversations(@GetUser('sub') userId: string) {
-    const conversations = await this.ragChat.getConversations(userId);
-    return successResponse(conversations, 'Conversations retrieved');
+  async getConversations(
+    @GetUser('sub') userId: string,
+    @Query() pagination: PaginationDto,
+  ) {
+    return this.ragChat.getConversations(userId, pagination);
   }
 
   @ApiOperation({ summary: 'Get conversation messages' })
@@ -53,33 +55,33 @@ export class ChatController {
     @Param('id') conversationId: string,
     @GetUser('sub') userId: string,
   ) {
-    const messages = await this.ragChat.getMessages(conversationId, userId);
-    return successResponse(messages, 'Messages retrieved');
+    return this.ragChat.getMessages(conversationId, userId);
   }
 
   @ApiOperation({ summary: 'Send chat message' })
-  @Post()
-  async chat(@Body() dto: ChatMessageDto, @GetUser('sub') userId: string) {
-    const result = await this.ragChat.chat(
-      dto.conversationId,
-      dto.message,
-      userId,
-    );
-    return successResponse(result, 'Response generated');
+  @Post('conversations/:id')
+  async chat(
+    @Param('id') conversationId: string,
+    @Body() dto: SendMessageDto,
+    @GetUser('sub') userId: string,
+  ) {
+    return this.ragChat.chat(conversationId, dto.message, userId);
   }
 
   @ApiOperation({ summary: 'Stream chat response (SSE)' })
-  @Sse('stream')
-  async streamChat(
-    @Body() dto: ChatMessageDto,
+  @ApiQuery({ name: 'message', required: true, description: 'User message' })
+  @Sse('conversations/:id/stream')
+  streamChat(
+    @Param('id') conversationId: string,
+    @Query('message') message: string,
     @GetUser('sub') userId: string,
-  ): Promise<Observable<MessageEvent>> {
+  ): Observable<MessageEvent> {
     return new Observable((subscriber) => {
       (async () => {
         try {
           for await (const chunk of this.ragChat.streamChat(
-            dto.conversationId,
-            dto.message,
+            conversationId,
+            message,
             userId,
           )) {
             subscriber.next({ data: chunk });

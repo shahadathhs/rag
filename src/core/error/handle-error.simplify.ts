@@ -16,6 +16,24 @@ export function simplifyError(
   customMessage = 'Operation Failed',
   record = 'Record',
 ): never {
+  // Handle AppError first (it has a numeric code but is not a DB driver error)
+  if (error instanceof AppError) {
+    switch (error.code) {
+      case 400:
+        throw new BadRequestException(error.message);
+      case 401:
+        throw new UnauthorizedException(error.message);
+      case 403:
+        throw new ForbiddenException(error.message);
+      case 404:
+        throw new NotFoundException(error.message);
+      case 409:
+        throw new ConflictException(error.message);
+      default:
+        throw new InternalServerErrorException(error.message);
+    }
+  }
+
   // Handle MongoDB driver errors (check for code property)
   if ('code' in error && typeof error.code === 'number') {
     switch (error.code) {
@@ -93,23 +111,6 @@ export function simplifyError(
     throw new BadRequestException(
       `Cannot save ${record} due to conflicting array modifications`,
     );
-  }
-
-  if (error instanceof AppError) {
-    switch (error.code) {
-      case 400:
-        throw new BadRequestException(error.message);
-      case 401:
-        throw new UnauthorizedException(error.message);
-      case 403:
-        throw new ForbiddenException(error.message);
-      case 404:
-        throw new NotFoundException(error.message);
-      case 409:
-        throw new ConflictException(error.message);
-      default:
-        throw new InternalServerErrorException(error.message);
-    }
   }
 
   if (error instanceof AxiosError) {

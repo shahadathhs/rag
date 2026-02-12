@@ -1,6 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { AppError } from '@/core/error/handle-error.app';
+import { HandleError } from '@/core/error/handle-error.decorator';
 import {
   Conversation,
   ConversationDocument,
@@ -9,8 +8,14 @@ import {
   RagMessage,
   RagMessageDocument,
 } from '@/lib/database/schemas/rag-message.schema';
-import { VectorSearchService } from './vector-search.service';
+import { Injectable, Logger } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model, Types } from 'mongoose';
 import { OllamaService } from './ollama.service';
+import { VectorSearchService } from './vector-search.service';
+import { successResponse, successPaginatedResponse } from '@/common/utils/response.util';
+import type { TResponse, TPaginatedResponse } from '@/common/utils/response.util';
+import type { PaginationDto } from '@/common/dto/pagination.dto';
 
 @Injectable()
 export class RagChatService {
@@ -25,18 +30,19 @@ export class RagChatService {
     private readonly ollama: OllamaService,
   ) {}
 
+  @HandleError('Error chatting', 'conversationId')
   async chat(
     conversationId: string,
     message: string,
     userId: string,
-  ): Promise<{ response: string; sources: any[] }> {
+  ): Promise<TResponse<{ response: string; sources: any[] }>> {
     const conversation = await this.conversationModel.findOne({
-      _id: conversationId,
-      userId,
+      _id: new Types.ObjectId(conversationId),
+      userId: new Types.ObjectId(userId),
     });
 
     if (!conversation) {
-      throw new Error('Conversation not found');
+      throw new AppError(404, 'Conversation not found');
     }
 
     // Save user message
@@ -85,28 +91,32 @@ export class RagChatService {
       },
     );
 
-    return {
-      response,
-      sources: searchResults.map((r) => ({
-        content: r.chunk.content,
-        score: r.score,
-        documentId: r.chunk.documentId,
-      })),
-    };
+    return successResponse(
+      {
+        response,
+        sources: searchResults.map((r) => ({
+          content: r.chunk.content,
+          score: r.score,
+          documentId: r.chunk.documentId,
+        })),
+      },
+      'Response generated',
+    );
   }
 
+  @HandleError('Error streaming chat', 'conversationId')
   async *streamChat(
     conversationId: string,
     message: string,
     userId: string,
   ): AsyncGenerator<string> {
     const conversation = await this.conversationModel.findOne({
-      _id: conversationId,
-      userId,
+      _id: new Types.ObjectId(conversationId),
+      userId: new Types.ObjectId(userId),
     });
 
     if (!conversation) {
-      throw new Error('Conversation not found');
+      throw new AppError(404, 'Conversation not found');
     }
 
     // Save user message
@@ -172,39 +182,62 @@ Answer:`;
     userId: string,
     title: string,
     documentIds: string[] = [],
-  ): Promise<ConversationDocument> {
-    return this.conversationModel.create({
+  ): Promise<TResponse<ConversationDocument>> {
+    const conversation = await this.conversationModel.create({
       userId: new Types.ObjectId(userId),
       title,
       documentIds: documentIds.map((id) => new Types.ObjectId(id)),
       messageCount: 0,
     });
+    return successResponse(conversation, 'Conversation created');
   }
 
-  async getConversations(userId: string): Promise<ConversationDocument[]> {
-    return this.conversationModel
-      .find({ userId })
-      .sort({ updatedAt: -1 })
-      .exec();
+  async getConversations(
+    userId: string,
+    pagination: PaginationDto,
+  ): Promise<TPaginatedResponse<ConversationDocument>> {
+    const page = pagination.page ?? 1;
+    const limit = pagination.limit ?? 10;
+    const skip = (page - 1) * limit;
+
+    const [data, total] = await Promise.all([
+      this.conversationModel
+        .find({ userId: new Types.ObjectId(userId) })
+        .sort({ updatedAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .exec(),
+      this.conversationModel.countDocuments({
+        userId: new Types.ObjectId(userId),
+      }),
+    ]);
+
+    return successPaginatedResponse(
+      data,
+      { page, limit, total },
+      'Conversations retrieved',
+    );
   }
 
   async getMessages(
     conversationId: string,
     userId: string,
-  ): Promise<RagMessageDocument[]> {
+  ): Promise<TResponse<RagMessageDocument[]>> {
     const conversation = await this.conversationModel.findOne({
-      _id: conversationId,
-      userId,
+      _id: new Types.ObjectId(conversationId),
+      userId: new Types.ObjectId(userId),
     });
 
     if (!conversation) {
-      throw new Error('Conversation not found');
+      throw new AppError(404, 'Conversation not found');
     }
 
-    return this.messageModel
+    const messages = await this.messageModel
       .find({ conversationId })
       .sort({ createdAt: 1 })
       .populate('sourceChunkIds')
       .exec();
+
+    return successResponse(messages, 'Messages retrieved');
   }
 }

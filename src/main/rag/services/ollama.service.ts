@@ -22,11 +22,10 @@ export class OllamaService {
   private readonly model: string;
 
   constructor(private readonly configService: ConfigService) {
-    this.baseUrl = this.configService.get<string>(
+    this.baseUrl = this.configService.getOrThrow<string>(
       'OLLAMA_BASE_URL',
-      'http://localhost:11434',
     );
-    this.model = this.configService.get<string>('OLLAMA_MODEL', 'llama3.2');
+    this.model = this.configService.getOrThrow<string>('OLLAMA_MODEL');
   }
 
   async generateResponse(prompt: string, model?: string): Promise<string> {
@@ -50,7 +49,17 @@ export class OllamaService {
       const data: OllamaResponse = await response.json();
       return data.response;
     } catch (error) {
-      this.logger.error('Failed to generate response from Ollama', error);
+      const err = error as NodeJS.ErrnoException & { cause?: { code?: string } };
+      const isRefused =
+        err?.cause?.code === 'ECONNREFUSED' || err?.code === 'ECONNREFUSED';
+      if (isRefused) {
+        this.logger.error(
+          `Cannot connect to Ollama at ${this.baseUrl}. ` +
+            'Ensure Ollama is running and OLLAMA_BASE_URL is set correctly (e.g. http://ollama:11434 in Docker).',
+        );
+      } else {
+        this.logger.error('Failed to generate response from Ollama', error);
+      }
       throw error;
     }
   }
@@ -102,7 +111,17 @@ export class OllamaService {
         }
       }
     } catch (error) {
-      this.logger.error('Failed to stream response from Ollama', error);
+      const err = error as NodeJS.ErrnoException & { cause?: { code?: string } };
+      const isRefused =
+        err?.cause?.code === 'ECONNREFUSED' || err?.code === 'ECONNREFUSED';
+      if (isRefused) {
+        this.logger.error(
+          `Cannot connect to Ollama at ${this.baseUrl}. ` +
+            'Ensure Ollama is running and OLLAMA_BASE_URL is set correctly (e.g. http://ollama:11434 in Docker).',
+        );
+      } else {
+        this.logger.error('Failed to stream response from Ollama', error);
+      }
       throw error;
     }
   }

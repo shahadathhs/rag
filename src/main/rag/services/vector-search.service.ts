@@ -1,10 +1,12 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { AppError } from '@/core/error/handle-error.app';
+import { HandleError } from '@/core/error/handle-error.decorator';
 import {
   DocumentChunk,
   DocumentChunkDocument,
 } from '@/lib/database/schemas/document-chunk.schema';
+import { Injectable, Logger } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
 import { EmbeddingService } from './embedding.service';
 
 interface SearchResult {
@@ -22,15 +24,17 @@ export class VectorSearchService {
     private readonly embeddingService: EmbeddingService,
   ) {}
 
+  @HandleError('Error searching similar chunks', 'userId')
   async searchSimilarChunks(
     query: string,
     userId: string,
     limit = 5,
   ): Promise<SearchResult[]> {
-    try {
       // Generate embedding for the query
       const queryEmbedding =
         await this.embeddingService.generateEmbedding(query);
+
+      this.logger.log('Query embedding generated', JSON.stringify(queryEmbedding));
 
       // Get all chunks for the user
       const chunks = await this.chunkModel
@@ -38,49 +42,51 @@ export class VectorSearchService {
         .populate('documentId')
         .lean();
 
+      this.logger.log('Chunks found', JSON.stringify(chunks));
+
       // Calculate cosine similarity for each chunk
       const results: SearchResult[] = chunks.map((chunk) => ({
         chunk: chunk as DocumentChunkDocument,
         score: this.cosineSimilarity(queryEmbedding, chunk.embedding),
       }));
 
+      this.logger.log('Results found', JSON.stringify(results));
+
       // Sort by score and return top results
       return results.sort((a, b) => b.score - a.score).slice(0, limit);
-    } catch (error) {
-      this.logger.error('Failed to search similar chunks', error);
-      throw error;
-    }
   }
 
+  @HandleError('Error searching in documents', 'documentIds')
   async searchInDocuments(
     query: string,
     documentIds: string[],
     limit = 5,
   ): Promise<SearchResult[]> {
-    try {
       const queryEmbedding =
         await this.embeddingService.generateEmbedding(query);
+
+      this.logger.log('Query embedding generated', JSON.stringify(queryEmbedding));
 
       const chunks = await this.chunkModel
         .find({ documentId: { $in: documentIds } })
         .populate('documentId')
         .lean();
 
+      this.logger.log('Chunks found', JSON.stringify(chunks));
+
       const results: SearchResult[] = chunks.map((chunk) => ({
         chunk: chunk as DocumentChunkDocument,
         score: this.cosineSimilarity(queryEmbedding, chunk.embedding),
       }));
 
+      this.logger.log('Results found', JSON.stringify(results));
+
       return results.sort((a, b) => b.score - a.score).slice(0, limit);
-    } catch (error) {
-      this.logger.error('Failed to search in documents', error);
-      throw error;
-    }
   }
 
   private cosineSimilarity(a: number[], b: number[]): number {
     if (a.length !== b.length) {
-      throw new Error('Vectors must have the same length');
+      throw new AppError(400, 'Vectors must have the same length');
     }
 
     let dotProduct = 0;
