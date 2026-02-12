@@ -16,7 +16,7 @@ graph TB
     VectorSearch --> Embedding
 
     RagChat --> VectorSearch
-    RagChat --> Ollama[Ollama LLM<br/>localhost:11434]
+    RagChat --> Ollama[Ollama LLM<br/>OLLAMA_BASE_URL]
     RagChat --> MongoDB
 
     MongoDB --> DocSchema[Document Schema]
@@ -29,7 +29,9 @@ graph TB
 
 ## Flow 1: Document Upload & Processing
 
-### API Endpoint
+### API Endpoints
+
+**Upload document**
 
 ```
 POST /documents
@@ -37,6 +39,22 @@ Authorization: Bearer <token>
 Content-Type: multipart/form-data
 
 Body: { file: <PDF|DOCX|TXT|MD> }
+```
+
+**Get my documents (paginated)**
+
+```
+GET /documents?page=1&limit=10
+Authorization: Bearer <token>
+```
+
+Returns paginated list of the user's uploaded documents with metadata (page, limit, total, totalPage).
+
+**Delete document**
+
+```
+DELETE /documents/:id
+Authorization: Bearer <token>
 ```
 
 ### Sequence Diagram
@@ -67,8 +85,8 @@ sequenceDiagram
     end
 
     DP->>DB: Update document (status: completed)
-    DP-->>API: Document processed
-    API-->>User: Success response
+    DP-->>API: successResponse(document, message)
+    API-->>User: { success, message, data }
 ```
 
 ### Step-by-Step Process
@@ -113,13 +131,14 @@ sequenceDiagram
 
 ### API Endpoint
 
+Conversation ID is in the path; message is in the body.
+
 ```
-POST /chat
+POST /chat/conversations/:id
 Authorization: Bearer <token>
 Content-Type: application/json
 
 Body: {
-  "conversationId": "507f1f77bcf86cd799439011",
   "message": "What is the main topic?"
 }
 ```
@@ -136,7 +155,7 @@ sequenceDiagram
     participant Ollama as Ollama LLM
     participant DB as MongoDB
 
-    User->>API: Send message
+    User->>API: POST /chat/conversations/:id { message }
     API->>RC: chat(conversationId, message, userId)
 
     RC->>DB: Get conversation
@@ -144,72 +163,62 @@ sequenceDiagram
 
     RC->>DB: Save user message
 
-    RC->>VS: searchInDocuments(message, documentIds, limit=5)
+    RC->>RC: retrieveContext(conversation, message, userId)
+    Note over RC: documentIds set → searchInDocuments<br/>else → searchSimilarChunks<br/>limit=8; fallback to user chunks if 0
+
+    RC->>VS: searchInDocuments or searchSimilarChunks
     VS->>ES: generateEmbedding(message)
     ES-->>VS: Query vector (384-d)
-
-    VS->>DB: Get all chunks for documents
-    DB-->>VS: Document chunks with embeddings
-
-    VS->>VS: Calculate cosine similarity<br/>for each chunk
-    VS-->>RC: Top 5 relevant chunks
+    VS->>DB: Get chunks (by documentIds or userId, ObjectId)
+    DB-->>VS: Chunks with embeddings
+    VS->>VS: Cosine similarity, sort, top 8
+    VS-->>RC: Top 8 relevant chunks
 
     RC->>RC: Assemble prompt with context
-    Note over RC: Context: chunk1 + chunk2 + ... + chunk5<br/>Question: user message
+    Note over RC: If no context: "No relevant passages found..."<br/>Else: context + user question
 
     RC->>Ollama: generateResponse(prompt)
     Ollama-->>RC: Generated response
 
-    RC->>DB: Save assistant message<br/>with sourceChunkIds
+    RC->>DB: Save assistant message + sourceChunkIds
     RC->>DB: Update conversation stats
 
-    RC-->>API: Response + sources
-    API-->>User: Answer with citations
+    RC-->>API: successResponse({ response, sources })
+    API-->>User: { success, message, data }
 ```
 
 ### Step-by-Step Process
 
 1. **Message Reception**
-   - User sends message with conversationId
-   - Conversation validated and retrieved
+   - User sends message to `POST /chat/conversations/:id` with body `{ "message": "..." }`
+   - Conversation ID in path; conversation validated and retrieved
 
 2. **User Message Storage**
    - Message saved to `RagMessage` collection
    - Role: "user", linked to conversation
 
-3. **Context Retrieval**
-   - Query embedding generated from user message
-   - Vector search finds top 5 similar chunks
-   - Cosine similarity calculated: `dot(a,b) / (||a|| * ||b||)`
+3. **Context Retrieval (retrieveContext)**
+   - If conversation has `documentIds`: `searchInDocuments(message, documentIds, 8)` (chunks scoped to those documents, using ObjectIds)
+   - Else: `searchSimilarChunks(message, userId, 8)` (all user chunks)
+   - If document-scoped search returns 0 chunks: fallback to `searchSimilarChunks` for the user
+   - Query embedding from user message; cosine similarity; top 8 chunks returned
 
 4. **Prompt Assembly**
-
-   ```
-   You are a helpful assistant. Use the following context...
-
-   Context:
-   [chunk1 content]
-   [chunk2 content]
-   ...
-
-   User Question: [user message]
-
-   Answer:
-   ```
+   - If context is empty: prompt states "No relevant passages were found in the user's uploaded documents" and instructs the model to say so
+   - Otherwise: context from chunks + user question; model instructed to answer from context or say nothing relevant
 
 5. **LLM Generation**
-   - Prompt sent to Ollama (localhost:11434)
-   - Model generates response based on context
-   - Response returned as complete text
+   - Prompt sent to Ollama (`OLLAMA_BASE_URL`, e.g. http://ollama:11434 in Docker)
+   - Model generates response; returned as complete text
 
 6. **Response Storage**
-   - Assistant message saved with response
-   - `sourceChunkIds` array stores which chunks were used
-   - Metadata includes retrieval scores
+   - Assistant message saved with response, `sourceChunkIds`, retrieval scores
 
 7. **Conversation Update**
-   - `messageCount` incremented by 2
-   - `lastMessageAt` timestamp updated
+   - `messageCount` incremented by 2, `lastMessageAt` updated
+
+8. **API Response**
+   - Controller returns service result: `successResponse({ response, sources })` with no extra wrapping
 
 ---
 
@@ -217,15 +226,12 @@ sequenceDiagram
 
 ### API Endpoint
 
-```
-POST /chat/stream
-Authorization: Bearer <token>
-Content-Type: application/json
+SSE endpoint: conversation ID in path, message as query parameter (GET).
 
-Body: {
-  "conversationId": "507f1f77bcf86cd799439011",
-  "message": "Summarize the document"
-}
+```
+GET /chat/conversations/:id/stream?message=Summarize%20the%20document
+Authorization: Bearer <token>
+Accept: text/event-stream
 ```
 
 ### Sequence Diagram
@@ -239,52 +245,49 @@ sequenceDiagram
     participant Ollama as Ollama LLM
     participant DB as MongoDB
 
-    User->>API: Send message (stream request)
+    User->>API: GET /chat/conversations/:id/stream?message=...
     API->>RC: streamChat(conversationId, message, userId)
 
-    RC->>DB: Save user message
-    RC->>VS: searchInDocuments(message, documentIds, 5)
-    VS-->>RC: Top 5 chunks
+    RC->>DB: Get conversation, save user message
+    RC->>RC: retrieveContext (same as standard, limit=8)
+    RC->>VS: searchInDocuments or searchSimilarChunks
+    VS-->>RC: Top 8 chunks
 
     RC->>RC: Assemble prompt
     RC->>Ollama: streamResponse(prompt)
 
     loop For each token
         Ollama-->>RC: Token chunk
-        RC-->>API: SSE event {data: chunk}
-        API-->>User: Stream chunk
+        RC-->>API: Yield chunk
+        API-->>User: SSE event { data: chunk }
     end
 
     Ollama-->>RC: Stream complete
-    RC->>DB: Save full response
-    RC->>DB: Update conversation
+    RC->>DB: Save full response, update conversation
     RC-->>API: Stream end
 ```
 
 ### Step-by-Step Process
 
 1. **Stream Initialization**
-   - SSE (Server-Sent Events) connection established
-   - Observable created for streaming
+   - Client opens GET to `/chat/conversations/:id/stream?message=...`
+   - SSE (Server-Sent Events) connection; Observable streams chunks
 
-2. **Context Retrieval** (same as standard)
-   - Vector search for relevant chunks
-   - Prompt assembled with context
+2. **Context Retrieval** (same as standard chat)
+   - `retrieveContext`: document-scoped or user-wide, limit 8, fallback if 0
+   - Prompt assembled with context (or "no relevant passages" when empty)
 
 3. **Streaming Generation**
    - Ollama API called with `stream: true`
-   - Response reader processes chunks line-by-line
-   - Each token emitted as SSE event
+   - Each token yielded and sent as SSE event
 
 4. **Real-time Delivery**
    - User receives tokens as they're generated
-   - No waiting for complete response
-   - Better UX for long responses
+   - No waiting for full response
 
 5. **Post-stream Storage**
-   - Full response accumulated during streaming
-   - Saved to database after completion
-   - Same metadata as standard chat
+   - Full response accumulated and saved with sourceChunkIds
+   - Conversation stats updated
 
 ---
 
@@ -294,30 +297,31 @@ sequenceDiagram
 
 ```
 POST /chat/conversations
+Content-Type: application/json
 Body: {
   "title": "Research Chat",
-  "documentIds": ["doc1", "doc2"]
+  "documentIds": ["docId1", "docId2"]   // optional
 }
 ```
 
 **Process:**
 
-1. Conversation record created
-2. Optional document IDs linked
+1. Conversation record created with `userId`, `title`, `documentIds` (ObjectIds)
+2. Optional document IDs scope subsequent RAG search to those documents
 3. Initial messageCount = 0
-4. Returns conversation ID
+4. Returns `successResponse(conversation, 'Conversation created')` (service builds response; controller returns it)
 
-### List Conversations
+### List Conversations (paginated)
 
 ```
-GET /chat/conversations
+GET /chat/conversations?page=1&limit=10
 ```
 
 **Process:**
 
-1. Query all conversations for user
+1. Query conversations for user with pagination (skip, limit)
 2. Sort by `updatedAt` descending
-3. Return list with metadata
+3. Return `successPaginatedResponse(data, { page, limit, total }, message)` with metadata (totalPage, etc.)
 
 ### Get Messages
 
@@ -327,10 +331,10 @@ GET /chat/conversations/:id/messages
 
 **Process:**
 
-1. Validate conversation ownership
-2. Query messages sorted by `createdAt`
+1. Validate conversation ownership (conversationId + userId, ObjectIds)
+2. Query messages for conversation, sorted by `createdAt`
 3. Populate `sourceChunkIds` for citations
-4. Return full conversation history
+4. Return `successResponse(messages, 'Messages retrieved')`
 
 ---
 
@@ -356,30 +360,27 @@ MongoDB DocumentChunk Collection
 User Question
   ↓ (embedding)
 Query Vector (384-d)
-  ↓ (cosine similarity search)
-Top 5 Relevant Chunks
-  ↓ (context assembly)
+  ↓ (retrieveContext: document-scoped or user-wide, ObjectIds)
+  ↓ (cosine similarity, top 8; fallback to user chunks if 0)
+Top 8 Relevant Chunks
+  ↓ (context assembly; empty → "No relevant passages" in prompt)
 Prompt with Context
-  ↓ (Ollama LLM)
+  ↓ (Ollama LLM, OLLAMA_BASE_URL)
 Generated Response
-  ↓ (storage + return)
-User receives answer + sources
+  ↓ (storage + successResponse)
+User receives { success, message, data: { response, sources } }
 ```
 
 ---
 
 ## Key Technical Details
 
-### Vector Search Algorithm
+### Vector Search
 
-```typescript
-cosineSimilarity(a, b) =
-  dotProduct(a, b) / (norm(a) * norm(b))
-
-where:
-  dotProduct = Σ(a[i] * b[i])
-  norm(a) = √(Σ(a[i]²))
-```
+- **Document-scoped**: `searchInDocuments(query, documentIds, limit=8)` — chunks filtered by `documentId: { $in: objectIds }` (ObjectIds).
+- **User-wide**: `searchSimilarChunks(query, userId, limit=8)` — chunks filtered by `userId: ObjectId(userId)`.
+- **Cosine similarity**: `dotProduct(a, b) / (norm(a) * norm(b))`; sort by score descending; return top 8.
+- **Debug**: VectorSearchService logs (debug level) query embedding, chunks found, and results.
 
 ### Chunking Strategy
 
@@ -403,9 +404,9 @@ where:
 ### LLM Integration
 
 - **Service**: Ollama
-- **Default Model**: llama3.2
-- **Endpoint**: http://localhost:11434
-- **Modes**: Standard + Streaming
+- **Default Model**: `OLLAMA_MODEL` (e.g. llama3.2)
+- **Base URL**: `OLLAMA_BASE_URL` (e.g. http://localhost:11434 locally; http://ollama:11434 in Docker)
+- **Modes**: Standard (`generateResponse`) + Streaming (`streamResponse`)
 
 ---
 
@@ -419,10 +420,11 @@ where:
 
 ### Chat Errors
 
-- Conversation not found → 404 error
-- No documents in conversation → search all user chunks
-- Ollama unavailable → error returned to user
-- Empty context → LLM responds with "no relevant information"
+- Conversation not found → 404 (AppError handled before generic "Database error")
+- No documentIds on conversation → search all user chunks (`searchSimilarChunks`)
+- Document-scoped search returns 0 → fallback to `searchSimilarChunks` for user
+- Ollama unavailable (e.g. ECONNREFUSED) → error returned; log suggests checking OLLAMA_BASE_URL
+- Empty context → Prompt tells LLM "No relevant passages were found"; model says so clearly
 
 ---
 
