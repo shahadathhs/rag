@@ -2,17 +2,26 @@ import { ENVEnum } from '@/common/enum/env.enum';
 import { Global, Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
+import { UserRepository } from './repository/user.repository';
+import {
+  Conversation,
+  ConversationSchema,
+} from './schemas/conversation.schema';
+import { Document, DocumentSchema } from './schemas/document.schema';
+import {
+  DocumentChunk,
+  DocumentChunkSchema,
+} from './schemas/document-chunk.schema';
 import {
   FileInstance,
   FileInstanceSchema,
 } from './schemas/file-instance.schema';
+import { RagMessage, RagMessageSchema } from './schemas/rag-message.schema';
 import {
   RefreshToken,
   RefreshTokenSchema,
 } from './schemas/refresh-token.schema';
 import { User, UserSchema } from './schemas/user.schema';
-
-import { UserRepository } from './repository/user.repository';
 
 @Global()
 @Module({
@@ -28,6 +37,10 @@ import { UserRepository } from './repository/user.repository';
       { name: User.name, schema: UserSchema },
       { name: RefreshToken.name, schema: RefreshTokenSchema },
       { name: FileInstance.name, schema: FileInstanceSchema },
+      { name: Document.name, schema: DocumentSchema },
+      { name: DocumentChunk.name, schema: DocumentChunkSchema },
+      { name: Conversation.name, schema: ConversationSchema },
+      { name: RagMessage.name, schema: RagMessageSchema },
     ]),
   ],
   providers: [UserRepository],

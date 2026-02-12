@@ -1,7 +1,8 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from './auth/auth.module';
+import { RagModule } from './rag/rag.module';
 
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, RagModule],
 })
 export class MainModule {}

@@ -32,6 +32,7 @@ services:
     volumes:
       - files-data:/app/uploads
       - temp-data:/app/tmp
+      - ./uploads:/app/uploads
     healthcheck:
       test: ['CMD', 'curl', '-f', 'http://0.0.0.0:3000/health']
       interval: 30s
@@ -96,10 +97,20 @@ services:
       retries: 5
     restart: always
 
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ${PACKAGE_NAME}_ollama
+    ports:
+      - '127.0.0.1:11434:11434'
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
 volumes:
   mongodb_data:
   files-data:
   temp-data:
+  ollama_data:
 
 networks:
   default:
