@@ -104,7 +104,15 @@ export class ProductIndexingService {
     this.logger.log(`Product catalog indexed: ${products.length} products`);
   }
 
-  private normalizeToProduct(item: Record<string, unknown>): { name: string; description?: string; price?: number; sku?: string; category?: string; imageUrl?: string; metadata?: Record<string, unknown> } {
+  private normalizeToProduct(item: Record<string, unknown>): {
+    name: string;
+    description?: string;
+    price?: number;
+    sku?: string;
+    category?: string;
+    imageUrl?: string;
+    metadata?: Record<string, unknown>;
+  } {
     const name =
       typeof item.name === 'string'
         ? item.name.trim()
@@ -112,7 +120,9 @@ export class ProductIndexingService {
           ? item.title.trim()
           : String(item.id ?? item.sku ?? 'Unnamed').trim();
     if (!name) {
-      throw new Error('Product name is required (item must have name or title)');
+      throw new Error(
+        'Product name is required (item must have name or title)',
+      );
     }
     const price =
       typeof item.price === 'number'
@@ -132,7 +142,15 @@ export class ProductIndexingService {
         ? (item.metadata as Record<string, unknown>)
         : undefined;
 
-    const doc: { name: string; description?: string; price?: number; sku?: string; category?: string; imageUrl?: string; metadata?: Record<string, unknown> } = { name };
+    const doc: {
+      name: string;
+      description?: string;
+      price?: number;
+      sku?: string;
+      category?: string;
+      imageUrl?: string;
+      metadata?: Record<string, unknown>;
+    } = { name };
     if (description != null) doc.description = description;
     if (price != null && !Number.isNaN(price)) doc.price = price;
     if (sku != null) doc.sku = sku;

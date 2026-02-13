@@ -8,9 +8,17 @@ graph TB
     API --> DocProc[Document Processor]
     API --> VectorSearch[Vector Search]
     API --> RagChat[RAG Chat Service]
+    API --> Admin[Admin Module]
+    Admin --> ProductQueue[Product Index Queue]
+    ProductQueue --> Redis[(Redis)]
+    ProductQueue --> Worker[Product Index Worker]
+    Worker --> ProductIndex[Product Indexing Service]
 
     DocProc --> Embedding[Embedding Service<br/>transformers.js]
     DocProc --> MongoDB[(MongoDB)]
+
+    ProductIndex --> Embedding
+    ProductIndex --> MongoDB
 
     VectorSearch --> MongoDB
     VectorSearch --> Embedding
@@ -21,6 +29,8 @@ graph TB
 
     MongoDB --> DocSchema[Document Schema]
     MongoDB --> ChunkSchema[DocumentChunk Schema<br/>384-d vectors]
+    MongoDB --> ProductSchema[Product Schema]
+    MongoDB --> ProductChunkSchema[ProductChunk Schema<br/>384-d vectors]
     MongoDB --> ConvSchema[Conversation Schema]
     MongoDB --> MsgSchema[RagMessage Schema]
 ```
@@ -81,7 +91,7 @@ sequenceDiagram
     loop For each chunk
         DP->>ES: generateEmbedding(chunkText)
         ES-->>DP: 384-d vector
-        DP->>DB: Save chunk with embedding
+        DP->>DB: Save chunk with embedding (documentId, userId)
     end
 
     DP->>DB: Update document (status: completed)
@@ -98,10 +108,10 @@ sequenceDiagram
 
 2. **Document Record Creation**
    - Document schema entry created with status "processing"
-   - Metadata stored: filename, fileType, fileSize, filePath
+   - Metadata stored: filename, originalName, fileType, fileSize, filePath
 
 3. **Text Extraction**
-   - **PDF**: `pdf-parse` extracts text from buffer
+   - **PDF**: `pdf-parse` (PDFParse with Uint8Array buffer) extracts text
    - **DOCX**: `mammoth.extractRawText()` extracts text
    - **TXT/MD**: Direct file read as UTF-8
 
@@ -117,7 +127,7 @@ sequenceDiagram
 
 6. **Chunk Storage**
    - Each chunk saved to `DocumentChunk` collection
-   - Includes: content, embedding, chunkIndex, tokenCount
+   - Includes: content, embedding, chunkIndex, tokenCount, documentId, userId
    - Linked to document via `documentId`
 
 7. **Status Update**
@@ -127,20 +137,117 @@ sequenceDiagram
 
 ---
 
-## Flow 2: RAG Chat (Standard)
+## Flow 2: Product Catalog & Indexing
+
+The product catalog is a **global** index (no per-user scope). It is managed by **superadmin** only and powers semantic search in RAG chat alongside user documents.
+
+### API Endpoints (Admin — superadmin only)
+
+**Create a single product (sync)**
+
+```
+POST /admin/products
+Authorization: Bearer <superadmin-token>
+Content-Type: application/json
+
+Body: { name, description?, price?, sku?, category?, imageUrl?, metadata? }
+```
+
+**Bulk upload products (async, queued)**
+
+```
+POST /admin/products/bulk
+Authorization: Bearer <superadmin-token>
+Content-Type: application/json
+
+Body: { products: [ { name, description?, ... }, ... ] }
+```
+
+Returns `202 Accepted` with message "Bulk upload accepted; indexing in progress". Indexing runs in a BullMQ worker.
+
+**List products (paginated)**
+
+```
+GET /admin/products?page=1&limit=10
+Authorization: Bearer <superadmin-token>
+```
+
+### Sequence: Single product
+
+```mermaid
+sequenceDiagram
+    participant Admin
+    participant API as Admin Products Controller
+    participant Svc as Admin Product Service
+    participant PIS as Product Indexing Service
+    participant ES as Embedding Service
+    participant DB as MongoDB
+
+    Admin->>API: POST /admin/products { name, ... }
+    API->>Svc: uploadProductSingle(dto)
+    Svc->>PIS: addOne(input)
+    PIS->>DB: Create Product
+    PIS->>PIS: productToChunkText (name, description, price, sku, category, metadata)
+    PIS->>ES: generateEmbedding(truncated content, max 500 chars)
+    ES-->>PIS: 384-d vector
+    PIS->>DB: Create ProductChunk (productId, content, embedding)
+    PIS-->>Svc: product
+    Svc-->>API: successResponse(product)
+    API-->>Admin: { success, message, data }
+```
+
+### Sequence: Bulk product index (queue)
+
+```mermaid
+sequenceDiagram
+    participant Admin
+    participant API as Admin Products Controller
+    participant Svc as Admin Product Service
+    participant Q as Product Index Queue
+    participant Redis as Redis
+    participant Worker as Product Index Worker
+    participant PIS as Product Indexing Service
+    participant DB as MongoDB
+
+    Admin->>API: POST /admin/products/bulk { products }
+    API->>Svc: uploadProductBulk(dtos)
+    Svc->>Q: enqueue({ data })
+    Q->>Redis: Add job
+    Svc-->>API: successResponse({ message: "Bulk upload accepted; indexing in progress" })
+    API-->>Admin: 202 Accepted
+
+    Worker->>Redis: Poll job
+    Redis-->>Worker: Job payload
+    Worker->>PIS: index(data)
+    PIS->>DB: deleteMany ProductChunk, deleteMany Product
+    PIS->>DB: insertMany Product
+    loop For each product
+        PIS->>PIS: productToChunkText, truncate 500 chars
+        PIS->>PIS: generateEmbedding
+        PIS->>DB: Create ProductChunk
+    end
+```
+
+### Product indexing details
+
+- **Single product**: `ProductIndexingService.addOne()` — creates one Product, one ProductChunk (content truncated to 500 chars), embedding generated synchronously.
+- **Bulk**: `ProductIndexingService.index(data)` — replaces entire catalog: deletes all ProductChunks and Products, inserts new products, then creates one chunk per product with embedding. Normalization accepts `name` or `title`; optional fields: description, price, sku, category, imageUrl, metadata.
+- **Queue**: BullMQ, queue name from `QueueName.PRODUCT_INDEX`; worker concurrency 1. Redis must be running for bulk upload.
+
+---
+
+## Flow 3: RAG Chat (Standard)
+
+Context is retrieved from **two sources** in parallel: (1) the user’s document chunks, and (2) the global product catalog chunks. Results are merged by score and limited to 8 total (e.g. 4 per source). Conversations no longer have `documentIds`; every chat uses the same retrieval strategy.
 
 ### API Endpoint
-
-Conversation ID is in the path; message is in the body.
 
 ```
 POST /chat/conversations/:id
 Authorization: Bearer <token>
 Content-Type: application/json
 
-Body: {
-  "message": "What is the main topic?"
-}
+Body: { "message": "What is the main topic?" }
 ```
 
 ### Sequence Diagram
@@ -158,74 +265,73 @@ sequenceDiagram
     User->>API: POST /chat/conversations/:id { message }
     API->>RC: chat(conversationId, message, userId)
 
-    RC->>DB: Get conversation
-    DB-->>RC: Conversation with documentIds
+    RC->>DB: Get conversation (by id + userId)
+    DB-->>RC: Conversation
 
     RC->>DB: Save user message
 
-    RC->>RC: retrieveContext(...)
-    Note over RC: If documentIds exist → searchInDocuments
-    Note over RC: Else → searchSimilarChunks
-    Note over RC: limit = 8, fallback to user chunks if 0 results
+    par User docs and Product catalog
+        RC->>VS: searchSimilarChunks(message, userId, 4)
+        VS->>ES: generateEmbedding(message)
+        ES-->>VS: Query vector (384-d)
+        VS->>DB: DocumentChunks where userId
+        VS->>VS: Cosine similarity, top 4
+        VS-->>RC: User doc results
+    and
+        RC->>VS: searchProductChunks(message, 4)
+        VS->>ES: generateEmbedding(message)
+        VS->>DB: ProductChunks (all)
+        VS->>VS: Cosine similarity, top 4
+        VS-->>RC: Product results
+    end
 
-    RC->>VS: searchInDocuments or searchSimilarChunks
-    VS->>ES: generateEmbedding(message)
-    ES-->>VS: Query vector (384-d)
-    VS->>DB: Get chunks (by documentIds or userId)
-    DB-->>VS: Chunks with embeddings
-    VS->>VS: Cosine similarity + ranking
-    VS-->>RC: Top 8 relevant chunks
-
-    RC->>RC: Assemble prompt
-    Note over RC: If no context → fallback system message
-    Note over RC: Else → context + user question
-
+    RC->>RC: Merge by score, take top 8
+    RC->>RC: Assemble prompt (context or "No relevant passages...")
     RC->>Ollama: generateResponse(prompt)
     Ollama-->>RC: Generated response
 
-    RC->>DB: Save assistant message + sourceChunkIds
-    RC->>DB: Update conversation stats
+    RC->>RC: splitChunkIds → documentChunkIds, productChunkIds
+    RC->>DB: Save assistant message (sourceChunkIds, metadata.sourceProductChunkIds)
+    RC->>DB: Update conversation (messageCount += 2, lastMessageAt)
 
     RC-->>API: successResponse({ response, sources })
-    API-->>User: JSON response
+    API-->>User: JSON response (sources include documentId or productId per item)
 ```
 
 ### Step-by-Step Process
 
 1. **Message Reception**
    - User sends message to `POST /chat/conversations/:id` with body `{ "message": "..." }`
-   - Conversation ID in path; conversation validated and retrieved
+   - Conversation ID in path; conversation validated by id + userId
 
 2. **User Message Storage**
-   - Message saved to `RagMessage` collection
-   - Role: "user", linked to conversation
+   - Message saved to `RagMessage` collection with role "user", linked to conversation
 
 3. **Context Retrieval (retrieveContext)**
-   - If conversation has `documentIds`: `searchInDocuments(message, documentIds, 8)` (chunks scoped to those documents, using ObjectIds)
-   - Else: `searchSimilarChunks(message, userId, 8)` (all user chunks)
-   - If document-scoped search returns 0 chunks: fallback to `searchSimilarChunks` for the user
-   - Query embedding from user message; cosine similarity; top 8 chunks returned
+   - **User documents**: `searchSimilarChunks(message, userId, limitPerSource)` — DocumentChunks for that user; limit 4.
+   - **Product catalog**: `searchProductChunks(message, limitPerSource)` — all ProductChunks; limit 4.
+   - Both run in parallel. Results merged by score (desc), then sliced to `totalLimit` (8).
+   - Query embedding from user message; cosine similarity in each collection.
 
 4. **Prompt Assembly**
-   - If context is empty: prompt states "No relevant passages were found in the user's uploaded documents" and instructs the model to say so
-   - Otherwise: context from chunks + user question; model instructed to answer from context or say nothing relevant
+   - If context is empty: prompt states "No relevant passages were found in the user's documents or product catalog" and instructs the model to say so.
+   - Otherwise: context from chunks + user question; model instructed to answer from context or say nothing relevant.
 
 5. **LLM Generation**
-   - Prompt sent to Ollama (`OLLAMA_BASE_URL`, e.g. http://ollama:11434 in Docker)
-   - Model generates response; returned as complete text
+   - Prompt sent to Ollama (`OLLAMA_BASE_URL`). Model generates response; returned as complete text.
 
 6. **Response Storage**
-   - Assistant message saved with response, `sourceChunkIds`, retrieval scores
+   - Assistant message saved with response, `sourceChunkIds` (document chunk refs), and optionally `metadata.sourceProductChunkIds` (product chunk refs), plus retrieval scores.
 
 7. **Conversation Update**
-   - `messageCount` incremented by 2, `lastMessageAt` updated
+   - `messageCount` incremented by 2, `lastMessageAt` updated.
 
 8. **API Response**
-   - Controller returns service result: `successResponse({ response, sources })` with no extra wrapping
+   - Controller returns `successResponse({ response, sources })`. Each source includes `content`, `score`, and either `documentId` or `productId`.
 
 ---
 
-## Flow 3: RAG Chat (Streaming)
+## Flow 4: RAG Chat (Streaming)
 
 ### API Endpoint
 
@@ -252,9 +358,9 @@ sequenceDiagram
     API->>RC: streamChat(conversationId, message, userId)
 
     RC->>DB: Get conversation, save user message
-    RC->>RC: retrieveContext (same as standard, limit=8)
-    RC->>VS: searchInDocuments or searchSimilarChunks
-    VS-->>RC: Top 8 chunks
+    RC->>RC: retrieveContext (same as standard: user chunks + product chunks, top 8)
+    RC->>VS: searchSimilarChunks + searchProductChunks (parallel)
+    VS-->>RC: Combined top 8 chunks
 
     RC->>RC: Assemble prompt
     RC->>Ollama: streamResponse(prompt)
@@ -266,7 +372,7 @@ sequenceDiagram
     end
 
     Ollama-->>RC: Stream complete
-    RC->>DB: Save full response, update conversation
+    RC->>DB: Save full response, sourceChunkIds, sourceProductChunkIds, update conversation
     RC-->>API: Stream end
 ```
 
@@ -274,70 +380,64 @@ sequenceDiagram
 
 1. **Stream Initialization**
    - Client opens GET to `/chat/conversations/:id/stream?message=...`
-   - SSE (Server-Sent Events) connection; Observable streams chunks
+   - SSE (Server-Sent Events) connection; Observable streams chunks.
 
 2. **Context Retrieval** (same as standard chat)
-   - `retrieveContext`: document-scoped or user-wide, limit 8, fallback if 0
-   - Prompt assembled with context (or "no relevant passages" when empty)
+   - `retrieveContext`: parallel `searchSimilarChunks(userId)` and `searchProductChunks`, merge by score, top 8. Prompt assembled with context or "no relevant passages".
 
 3. **Streaming Generation**
-   - Ollama API called with `stream: true`
-   - Each token yielded and sent as SSE event
+   - Ollama API called with `stream: true`; each token yielded and sent as SSE event.
 
-4. **Real-time Delivery**
-   - User receives tokens as they're generated
-   - No waiting for full response
-
-5. **Post-stream Storage**
-   - Full response accumulated and saved with sourceChunkIds
-   - Conversation stats updated
+4. **Post-stream Storage**
+   - Full response accumulated and saved with sourceChunkIds and sourceProductChunkIds; conversation stats updated.
 
 ---
 
-## Flow 4: Conversation Management
+## Flow 5: Conversation Management
+
+Conversations are **not** scoped to specific documents. They only have `userId`, `title`, `messageCount`, and `lastMessageAt`. RAG context is always: user’s document chunks + product catalog chunks.
 
 ### Create Conversation
 
 ```
 POST /chat/conversations
 Content-Type: application/json
-Body: {
-  "title": "Research Chat",
-  "documentIds": ["docId1", "docId2"]   // optional
-}
+Body: { "title": "Research Chat" }
+Authorization: Bearer <token>
 ```
 
 **Process:**
 
-1. Conversation record created with `userId`, `title`, `documentIds` (ObjectIds)
-2. Optional document IDs scope subsequent RAG search to those documents
-3. Initial messageCount = 0
-4. Returns `successResponse(conversation, 'Conversation created')` (service builds response; controller returns it)
+1. Conversation record created with `userId`, `title`. No `documentIds`.
+2. Initial messageCount = 0.
+3. Returns `successResponse(conversation, 'Conversation created')`.
 
 ### List Conversations (paginated)
 
 ```
 GET /chat/conversations?page=1&limit=10
+Authorization: Bearer <token>
 ```
 
 **Process:**
 
-1. Query conversations for user with pagination (skip, limit)
-2. Sort by `updatedAt` descending
-3. Return `successPaginatedResponse(data, { page, limit, total }, message)` with metadata (totalPage, etc.)
+1. Query conversations for user with pagination (skip, limit).
+2. Sort by `updatedAt` descending.
+3. Return paginated response with metadata (totalPage, etc.).
 
 ### Get Messages
 
 ```
 GET /chat/conversations/:id/messages
+Authorization: Bearer <token>
 ```
 
 **Process:**
 
-1. Validate conversation ownership (conversationId + userId, ObjectIds)
-2. Query messages for conversation, sorted by `createdAt`
-3. Populate `sourceChunkIds` for citations
-4. Return `successResponse(messages, 'Messages retrieved')`
+1. Validate conversation ownership (conversationId + userId).
+2. Query messages for conversation, sorted by `createdAt`.
+3. Populate `sourceChunkIds` for citations.
+4. Return `successResponse(messages, 'Messages retrieved')`.
 
 ---
 
@@ -354,7 +454,19 @@ Text Chunks[]
   ↓ (embedding: all-MiniLM-L6-v2)
 384-d Vectors[]
   ↓ (storage)
-MongoDB DocumentChunk Collection
+MongoDB DocumentChunk Collection (documentId, userId)
+```
+
+### Product catalog → Embeddings
+
+```
+Product (name, description, price, sku, category, ...)
+  ↓ (productToChunkText, truncate 500 chars)
+Single chunk text
+  ↓ (embedding: all-MiniLM-L6-v2)
+384-d Vector
+  ↓ (storage)
+MongoDB ProductChunk Collection (productId)
 ```
 
 ### Query → Response
@@ -363,15 +475,18 @@ MongoDB DocumentChunk Collection
 User Question
   ↓ (embedding)
 Query Vector (384-d)
-  ↓ (retrieveContext: document-scoped or user-wide, ObjectIds)
-  ↓ (cosine similarity, top 8; fallback to user chunks if 0)
-Top 8 Relevant Chunks
+  ↓ (retrieveContext)
+  ├─ searchSimilarChunks(message, userId, 4) → user DocumentChunks
+  └─ searchProductChunks(message, 4)         → ProductChunks
+  ↓ (merge by score, top 8)
+Top 8 Relevant Chunks (doc + product)
   ↓ (context assembly; empty → "No relevant passages" in prompt)
 Prompt with Context
   ↓ (Ollama LLM, OLLAMA_BASE_URL)
 Generated Response
   ↓ (storage + successResponse)
 User receives { success, message, data: { response, sources } }
+  (sources: content, score, documentId | productId)
 ```
 
 ---
@@ -380,29 +495,21 @@ User receives { success, message, data: { response, sources } }
 
 ### Vector Search
 
-- **Document-scoped**: `searchInDocuments(query, documentIds, limit=8)` — chunks filtered by `documentId: { $in: objectIds }` (ObjectIds).
-- **User-wide**: `searchSimilarChunks(query, userId, limit=8)` — chunks filtered by `userId: ObjectId(userId)`.
-- **Cosine similarity**: `dotProduct(a, b) / (norm(a) * norm(b))`; sort by score descending; return top 8.
-- **Debug**: VectorSearchService logs (debug level) query embedding, chunks found, and results.
+- **User document chunks**: `searchSimilarChunks(query, userId, limit)` — DocumentChunks with `userId`; cosine similarity; sort by score descending; return top `limit`.
+- **Product chunks**: `searchProductChunks(query, limit)` — all ProductChunks; cosine similarity; sort by score descending; return top `limit`.
+- **Document-scoped (optional)**: `searchInDocuments(query, documentIds, limit)` — chunks where `documentId` in `documentIds`; available for future use; not used in current conversation flow.
+- **Cosine similarity**: `dotProduct(a, b) / (norm(a) * norm(b))`; vectors 384-d.
 
 ### Chunking Strategy
 
-- **Size**: 500 characters
-- **Overlap**: 100 characters
-- **Rationale**: Balance between context and granularity
-- **Example**:
-  ```
-  Chunk 1: chars 0-500
-  Chunk 2: chars 400-900  (100 char overlap)
-  Chunk 3: chars 800-1300 (100 char overlap)
-  ```
+- **Documents**: 500 characters, 100 overlap. Empty chunks filtered out.
+- **Products**: One chunk per product; content = name, description, price, sku, category, metadata (text); truncated to 500 characters.
 
 ### Embedding Model
 
 - **Model**: `Xenova/all-MiniLM-L6-v2`
 - **Dimensions**: 384
 - **Runtime**: Node.js (via transformers.js)
-- **Speed**: ~50ms per embedding (local)
 
 ### LLM Integration
 
@@ -411,38 +518,37 @@ User receives { success, message, data: { response, sources } }
 - **Base URL**: `OLLAMA_BASE_URL` (e.g. http://localhost:11434 locally; http://ollama:11434 in Docker)
 - **Modes**: Standard (`generateResponse`) + Streaming (`streamResponse`)
 
+### Queue (BullMQ)
+
+- **Redis**: Required for product index queue. Connection via `REDIS_HOST`, `REDIS_PORT`.
+- **Queue**: One queue for product index jobs; worker runs `ProductIndexingService.index(data)` with concurrency 1.
+
 ---
 
 ## Error Handling
 
-### Document Processing Errors
+### Document Processing
 
-- File extraction fails → status: "failed", errorMessage stored
-- Embedding generation fails → retry or mark failed
-- Invalid file type → rejected at upload
+- File extraction fails → document status set to "failed", errorMessage stored; error rethrown.
+- Invalid file type → rejected at upload.
 
-### Chat Errors
+### Chat
 
-- Conversation not found → 404 (AppError handled before generic "Database error")
-- No documentIds on conversation → search all user chunks (`searchSimilarChunks`)
-- Document-scoped search returns 0 → fallback to `searchSimilarChunks` for user
-- Ollama unavailable (e.g. ECONNREFUSED) → error returned; log suggests checking OLLAMA_BASE_URL
-- Empty context → Prompt tells LLM "No relevant passages were found"; model says so clearly
+- Conversation not found (or wrong user) → 404 (AppError).
+- Ollama unavailable (e.g. ECONNREFUSED) → error returned; check OLLAMA_BASE_URL.
+- Empty context → Prompt tells LLM "No relevant passages were found"; model should say so clearly.
+
+### Product Indexing
+
+- Single product: validation and DB errors propagate to API.
+- Bulk (worker): on failure, worker logs and rethrows; job can be retried via BullMQ.
 
 ---
 
 ## Performance Considerations
 
-### Optimization Points
-
-1. **Batch Embedding**: Process multiple chunks in parallel
-2. **Vector Index**: MongoDB indexes on embedding field
-3. **Chunk Caching**: Cache frequently accessed chunks
-4. **Streaming**: Reduce perceived latency for long responses
-
-### Scalability
-
-- **Documents**: Unlimited per user
-- **Chunks**: ~2 chunks per 1000 characters
-- **Conversations**: Unlimited
-- **Messages**: Full history retained
+- **Parallel retrieval**: User chunks and product chunks are fetched in parallel in RAG chat.
+- **Batch embedding**: Document processor embeds chunks sequentially; product index embeds per product in a loop (bulk job runs in single worker).
+- **Vector index**: MongoDB indexes on embedding fields improve similarity search.
+- **Streaming**: Reduces perceived latency for long chat responses.
+- **Redis**: Required for bulk product indexing; ensure enough memory for queue and jobs.
