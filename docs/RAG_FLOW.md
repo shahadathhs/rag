@@ -153,7 +153,7 @@ Content-Type: application/json
 Body: { name, description?, price?, sku?, category?, imageUrl?, metadata? }
 ```
 
-**Bulk upload products (async, queued)**
+**Bulk replace catalog (async, queued)**
 
 ```
 POST /admin/products/bulk
@@ -163,7 +163,19 @@ Content-Type: application/json
 Body: { products: [ { name, description?, ... }, ... ] }
 ```
 
-Returns `202 Accepted` with message "Bulk upload accepted; indexing in progress". Indexing runs in a BullMQ worker.
+Replaces the **entire** product catalog with the payload: all existing products and chunks are removed, then the payload is indexed. Returns `202 Accepted` with message "Bulk replace accepted; indexing in progress".
+
+**Bulk add products (async, queued)**
+
+```
+POST /admin/products/bulk/add
+Authorization: Bearer <superadmin-token>
+Content-Type: application/json
+
+Body: { products: [ { name, description?, ... }, ... ] }
+```
+
+**Adds** the given products to the existing catalog; existing products and chunks are kept. Returns `202 Accepted` with message "Bulk add accepted; indexing in progress".
 
 **List products (paginated)**
 
@@ -196,7 +208,7 @@ sequenceDiagram
     API-->>Admin: { success, message, data }
 ```
 
-### Sequence: Bulk product index (queue)
+### Sequence: Bulk replace (POST /admin/products/bulk)
 
 ```mermaid
 sequenceDiagram
@@ -211,30 +223,58 @@ sequenceDiagram
 
     Admin->>API: POST /admin/products/bulk
     API->>Svc: uploadProductBulk(dtos)
-    Svc->>Q: enqueue job
+    Svc->>Q: enqueue({ data, replace: true })
     Q->>Redis: add job
     Svc-->>API: success response
     API-->>Admin: 202 Accepted
 
     Worker->>Redis: poll job
-    Redis-->>Worker: job payload
-    Worker->>PIS: index data
-    PIS->>DB: deleteMany ProductChunk
-    PIS->>DB: deleteMany Product
+    Redis-->>Worker: job payload (replace: true)
+    Worker->>PIS: index(data)
+    PIS->>DB: deleteMany ProductChunk, deleteMany Product
     PIS->>DB: insertMany Product
-
     loop For each product
-        PIS->>PIS: productToChunkText
-        PIS->>PIS: generateEmbedding
+        PIS->>PIS: productToChunkText, generateEmbedding
+        PIS->>DB: create ProductChunk
+    end
+```
+
+### Sequence: Bulk add (POST /admin/products/bulk/add)
+
+```mermaid
+sequenceDiagram
+    participant Admin
+    participant API as Admin Products Controller
+    participant Svc as Admin Product Service
+    participant Q as Product Index Queue
+    participant Redis
+    participant Worker as Product Index Worker
+    participant PIS as Product Indexing Service
+    participant DB as MongoDB
+
+    Admin->>API: POST /admin/products/bulk/add
+    API->>Svc: uploadProductBulkAdd(dtos)
+    Svc->>Q: enqueue({ data, replace: false })
+    Q->>Redis: add job
+    Svc-->>API: success response
+    API-->>Admin: 202 Accepted
+
+    Worker->>Redis: poll job
+    Redis-->>Worker: job payload (replace: false)
+    Worker->>PIS: addMany(data)
+    PIS->>DB: insertMany Product (append; no delete)
+    loop For each new product
+        PIS->>PIS: productToChunkText, generateEmbedding
         PIS->>DB: create ProductChunk
     end
 ```
 
 ### Product indexing details
 
-- **Single product**: `ProductIndexingService.addOne()` — creates one Product, one ProductChunk (content truncated to 500 chars), embedding generated synchronously.
-- **Bulk**: `ProductIndexingService.index(data)` — replaces entire catalog: deletes all ProductChunks and Products, inserts new products, then creates one chunk per product with embedding. Normalization accepts `name` or `title`; optional fields: description, price, sku, category, imageUrl, metadata.
-- **Queue**: BullMQ, queue name from `QueueName.PRODUCT_INDEX`; worker concurrency 1. Redis must be running for bulk upload.
+- **Single product**: `ProductIndexingService.addOne()` — creates one Product, one ProductChunk (content truncated to 500 chars), embedding generated synchronously. Used by `POST /admin/products`.
+- **Replace entire catalog**: `ProductIndexingService.index(data)` — deletes all ProductChunks and Products, then inserts the payload and creates one chunk per product. Used by **`POST /admin/products/bulk`** (worker receives `replace: true`).
+- **Add to existing catalog**: `ProductIndexingService.addMany(data)` — keeps all existing products and ProductChunks; inserts only the new products from the payload. Used by **`POST /admin/products/bulk/add`** (worker receives `replace: false`).
+- **Queue**: BullMQ, queue name `QueueName.PRODUCT_INDEX`; worker concurrency 1. Job payload includes `data` and `replace`; worker calls `index(data)` when `replace === true`, else `addMany(data)`. Redis must be running for bulk endpoints.
 
 ---
 

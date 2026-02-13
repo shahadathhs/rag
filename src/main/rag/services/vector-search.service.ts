@@ -43,25 +43,19 @@ export class VectorSearchService {
   ): Promise<SearchResult[]> {
     const queryEmbedding = await this.embeddingService.generateEmbedding(query);
 
-    this.logger.debug(
-      'Query embedding generated',
-      JSON.stringify(queryEmbedding),
-    );
-
     const chunks = await this.chunkModel
       .find({ userId: new Types.ObjectId(userId) })
       .populate('documentId')
       .lean();
-
-    this.logger.debug('Chunks found', JSON.stringify(chunks));
 
     const results: SearchResult[] = chunks.map((chunk) => ({
       chunk: chunk as DocumentChunkDocument,
       score: this.cosineSimilarity(queryEmbedding, chunk.embedding),
     }));
 
-    this.logger.debug('Results found', JSON.stringify(results));
-
+    this.logger.debug(
+      `searchSimilarChunks: ${chunks.length} chunks → top ${limit}`,
+    );
     return results.sort((a, b) => b.score - a.score).slice(0, limit);
   }
 
@@ -74,13 +68,19 @@ export class VectorSearchService {
 
     const chunks = await this.productChunkModel.find().lean();
 
-    if (chunks.length === 0) return [];
+    if (chunks.length === 0) {
+      this.logger.debug('searchProductChunks: 0 product chunks');
+      return [];
+    }
 
     const results: ProductSearchResult[] = chunks.map((chunk) => ({
       chunk: chunk as ProductChunkDocument,
       score: this.cosineSimilarity(queryEmbedding, chunk.embedding),
     }));
 
+    this.logger.debug(
+      `searchProductChunks: ${chunks.length} chunks → top ${limit}`,
+    );
     return results.sort((a, b) => b.score - a.score).slice(0, limit);
   }
 
@@ -96,19 +96,15 @@ export class VectorSearchService {
 
     const queryEmbedding = await this.embeddingService.generateEmbedding(query);
 
-    this.logger.debug('Query embedding generated');
-
     const objectIds = documentIds.map((id) => new Types.ObjectId(id));
     const chunks = await this.chunkModel
       .find({ documentId: { $in: objectIds } })
       .populate('documentId')
       .lean();
 
-    this.logger.debug('Chunks found');
-
     if (chunks.length === 0) {
       this.logger.warn(
-        `No chunks found for documentIds: ${documentIds.join(', ')}`,
+        `searchInDocuments: no chunks for documentIds: ${documentIds.join(', ')}`,
       );
       return [];
     }
@@ -118,8 +114,9 @@ export class VectorSearchService {
       score: this.cosineSimilarity(queryEmbedding, chunk.embedding),
     }));
 
-    this.logger.debug('Results found');
-
+    this.logger.debug(
+      `searchInDocuments: ${chunks.length} chunks → top ${limit}`,
+    );
     return results.sort((a, b) => b.score - a.score).slice(0, limit);
   }
 

@@ -59,6 +59,12 @@ export class DocumentProcessorService {
 
       // Split into chunks
       const chunks = this.chunkText(text);
+      const totalChunks = chunks.length;
+      const progressStep = Math.max(1, Math.floor(totalChunks / 10));
+
+      this.logger.log(
+        `Document ${document.originalName}: processing ${totalChunks} chunks`,
+      );
 
       // Generate embeddings and save chunks
       for (let i = 0; i < chunks.length; i++) {
@@ -74,6 +80,13 @@ export class DocumentProcessorService {
           chunkIndex: i,
           tokenCount: chunks[i].length,
         });
+
+        const done = i + 1;
+        if (done === totalChunks || done % progressStep === 0) {
+          this.logger.log(
+            `Document ${document.originalName}: chunk ${done}/${totalChunks}`,
+          );
+        }
       }
 
       // Update document status
@@ -82,7 +95,7 @@ export class DocumentProcessorService {
       await document.save();
 
       this.logger.log(
-        `Processed document ${document.filename} with ${chunks.length} chunks`,
+        `Document ${document.originalName}: completed (${chunks.length} chunks)`,
       );
 
       return successResponse(

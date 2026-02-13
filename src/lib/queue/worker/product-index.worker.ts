@@ -16,12 +16,18 @@ export class ProductIndexWorker extends WorkerHost {
   async process(job: Job<ProductIndexJobPayload>): Promise<void> {
     if (job.name !== QueueJobName.PRODUCT_INDEX) return;
 
-    const { data } = job.data;
+    const { data, replace } = job.data;
 
-    this.logger.log(`Processing product index job (${data.length} items)`);
+    this.logger.log(
+      `Processing product index job (${data.length} items, ${replace ? 'replace' : 'add'})`,
+    );
 
     try {
-      await this.productIndexingService.index(data);
+      if (replace) {
+        await this.productIndexingService.index(data);
+      } else {
+        await this.productIndexingService.addMany(data);
+      }
     } catch (err) {
       this.logger.error(
         `Failed to index products: ${(err as Error).message}`,

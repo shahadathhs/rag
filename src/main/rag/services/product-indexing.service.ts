@@ -64,11 +64,11 @@ export class ProductIndexingService {
       tokenCount: truncated.length,
     });
 
-    this.logger.log(`Added product: ${product.name} (${product._id})`);
+    this.logger.log(`Product added: ${product.name}`);
     return product;
   }
 
-  /** Replace entire catalog with new data (used by bulk job). */
+  /** Replace entire catalog with new data. Deletes all products and chunks, then inserts the payload. */
   async index(data: Record<string, unknown>[]): Promise<void> {
     await this.productChunkModel.deleteMany({});
     await this.productModel.deleteMany({});
@@ -80,6 +80,10 @@ export class ProductIndexingService {
 
     const docs = data.map((item) => this.normalizeToProduct(item));
     const products = await this.productModel.insertMany(docs);
+    const total = products.length;
+    const progressStep = Math.max(1, Math.floor(total / 10));
+
+    this.logger.log(`Product index (replace): ${total} products`);
 
     for (let i = 0; i < products.length; i++) {
       const product = products[i];
@@ -99,9 +103,56 @@ export class ProductIndexingService {
         chunkIndex: i,
         tokenCount: truncated.length,
       });
+
+      const done = i + 1;
+      if (done === total || done % progressStep === 0) {
+        this.logger.log(`Product index (replace): ${done}/${total}`);
+      }
     }
 
-    this.logger.log(`Product catalog indexed: ${products.length} products`);
+    this.logger.log(`Product index (replace): completed ${total} products`);
+  }
+
+  /** Add products to the existing catalog. Keeps all existing products and chunks; appends new ones only. */
+  async addMany(data: Record<string, unknown>[]): Promise<void> {
+    if (data.length === 0) {
+      this.logger.log('Add many: no products to add');
+      return;
+    }
+
+    const docs = data.map((item) => this.normalizeToProduct(item));
+    const products = await this.productModel.insertMany(docs);
+    const total = products.length;
+    const progressStep = Math.max(1, Math.floor(total / 10));
+
+    this.logger.log(`Product index (add): ${total} products`);
+
+    for (let i = 0; i < products.length; i++) {
+      const product = products[i];
+      const content = this.productToChunkText(product);
+      const truncated =
+        content.length > MAX_CHUNK_LENGTH
+          ? content.slice(0, MAX_CHUNK_LENGTH)
+          : content;
+
+      const embedding =
+        await this.embeddingService.generateEmbedding(truncated);
+
+      await this.productChunkModel.create({
+        productId: product._id,
+        content: truncated,
+        embedding,
+        chunkIndex: i,
+        tokenCount: truncated.length,
+      });
+
+      const done = i + 1;
+      if (done === total || done % progressStep === 0) {
+        this.logger.log(`Product index (add): ${done}/${total}`);
+      }
+    }
+
+    this.logger.log(`Product index (add): completed ${total} products`);
   }
 
   private normalizeToProduct(item: Record<string, unknown>): {

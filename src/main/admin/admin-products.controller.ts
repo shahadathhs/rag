@@ -26,11 +26,26 @@ export class AdminProductsController {
     return this.adminProductService.uploadProductSingle(dto);
   }
 
-  @ApiOperation({ summary: 'Bulk upload products (superadmin only)' })
+  @ApiOperation({
+    summary: 'Bulk replace catalog (superadmin only)',
+    description:
+      'Replaces the entire product catalog with the payload. All existing products and chunks are removed first.',
+  })
   @Post('bulk')
   @HttpCode(HttpStatus.ACCEPTED)
   async uploadBulk(@Body() dto: BulkUploadProductsDto) {
     return this.adminProductService.uploadProductBulk(dto.products);
+  }
+
+  @ApiOperation({
+    summary: 'Bulk add products (superadmin only)',
+    description:
+      'Adds the given products to the existing catalog. Existing products and chunks are kept.',
+  })
+  @Post('bulk/add')
+  @HttpCode(HttpStatus.ACCEPTED)
+  async uploadBulkAdd(@Body() dto: BulkUploadProductsDto) {
+    return this.adminProductService.uploadProductBulkAdd(dto.products);
   }
 
   @ApiOperation({ summary: 'List products (global catalog, superadmin only)' })

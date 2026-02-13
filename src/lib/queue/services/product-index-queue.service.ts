@@ -20,8 +20,9 @@ export class ProductIndexQueueService {
       attempts: 3,
       backoff: { type: 'exponential', delay: 1000 },
     });
+    const mode = payload.replace ? 'replace' : 'add';
     this.logger.log(
-      `Enqueued product index job ${job.id} (${payload.data.length} items)`,
+      `Enqueued product index job ${job.id} (${payload.data.length} items, ${mode})`,
     );
     return job.id ?? '';
   }

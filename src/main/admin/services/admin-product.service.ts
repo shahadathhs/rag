@@ -42,6 +42,7 @@ export class AdminProductService {
     return successResponse(product, 'Product created');
   }
 
+  /** Bulk replace: entire catalog is replaced by the payload. */
   async uploadProductBulk(
     dtos: CreateProductDto[],
   ): Promise<TResponse<{ message: string }>> {
@@ -54,10 +55,30 @@ export class AdminProductService {
       ...(d.imageUrl != null && { imageUrl: d.imageUrl }),
       ...(d.metadata != null && { metadata: d.metadata }),
     }));
-    await this.productIndexQueue.enqueue({ data });
+    await this.productIndexQueue.enqueue({ data, replace: true });
     return successResponse(
-      { message: 'Bulk upload accepted; indexing in progress' },
-      'Bulk upload accepted; indexing in progress',
+      { message: 'Bulk replace accepted; indexing in progress' },
+      'Bulk replace accepted; indexing in progress',
+    );
+  }
+
+  /** Bulk add: products are added to the existing catalog (no delete). */
+  async uploadProductBulkAdd(
+    dtos: CreateProductDto[],
+  ): Promise<TResponse<{ message: string }>> {
+    const data = dtos.map((d) => ({
+      name: d.name,
+      ...(d.description != null && { description: d.description }),
+      ...(d.price != null && { price: Number(d.price) }),
+      ...(d.sku != null && { sku: d.sku }),
+      ...(d.category != null && { category: d.category }),
+      ...(d.imageUrl != null && { imageUrl: d.imageUrl }),
+      ...(d.metadata != null && { metadata: d.metadata }),
+    }));
+    await this.productIndexQueue.enqueue({ data, replace: false });
+    return successResponse(
+      { message: 'Bulk add accepted; indexing in progress' },
+      'Bulk add accepted; indexing in progress',
     );
   }
 
