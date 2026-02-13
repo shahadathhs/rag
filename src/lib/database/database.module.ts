@@ -12,6 +12,11 @@ import {
   DocumentChunk,
   DocumentChunkSchema,
 } from './schemas/document-chunk.schema';
+import { Product, ProductSchema } from './schemas/product.schema';
+import {
+  ProductChunk,
+  ProductChunkSchema,
+} from './schemas/product-chunk.schema';
 import { RagMessage, RagMessageSchema } from './schemas/rag-message.schema';
 import {
   RefreshToken,
@@ -34,6 +39,8 @@ import { User, UserSchema } from './schemas/user.schema';
       { name: RefreshToken.name, schema: RefreshTokenSchema },
       { name: Document.name, schema: DocumentSchema },
       { name: DocumentChunk.name, schema: DocumentChunkSchema },
+      { name: Product.name, schema: ProductSchema },
+      { name: ProductChunk.name, schema: ProductChunkSchema },
       { name: Conversation.name, schema: ConversationSchema },
       { name: RagMessage.name, schema: RagMessageSchema },
     ]),

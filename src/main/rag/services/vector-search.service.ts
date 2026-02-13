@@ -4,13 +4,22 @@ import {
   DocumentChunk,
   DocumentChunkDocument,
 } from '@/lib/database/schemas/document-chunk.schema';
+import {
+  ProductChunk,
+  ProductChunkDocument,
+} from '@/lib/database/schemas/product-chunk.schema';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { EmbeddingService } from './embedding.service';
 
-interface SearchResult {
+export interface SearchResult {
   chunk: DocumentChunkDocument;
+  score: number;
+}
+
+export interface ProductSearchResult {
+  chunk: ProductChunkDocument;
   score: number;
 }
 
@@ -21,6 +30,8 @@ export class VectorSearchService {
   constructor(
     @InjectModel(DocumentChunk.name)
     private readonly chunkModel: Model<DocumentChunkDocument>,
+    @InjectModel(ProductChunk.name)
+    private readonly productChunkModel: Model<ProductChunkDocument>,
     private readonly embeddingService: EmbeddingService,
   ) {}
 
@@ -50,6 +61,25 @@ export class VectorSearchService {
     }));
 
     this.logger.debug('Results found', JSON.stringify(results));
+
+    return results.sort((a, b) => b.score - a.score).slice(0, limit);
+  }
+
+  @HandleError('Error searching product chunks', 'query')
+  async searchProductChunks(
+    query: string,
+    limit = 5,
+  ): Promise<ProductSearchResult[]> {
+    const queryEmbedding = await this.embeddingService.generateEmbedding(query);
+
+    const chunks = await this.productChunkModel.find().lean();
+
+    if (chunks.length === 0) return [];
+
+    const results: ProductSearchResult[] = chunks.map((chunk) => ({
+      chunk: chunk as ProductChunkDocument,
+      score: this.cosineSimilarity(queryEmbedding, chunk.embedding),
+    }));
 
     return results.sort((a, b) => b.score - a.score).slice(0, limit);
   }

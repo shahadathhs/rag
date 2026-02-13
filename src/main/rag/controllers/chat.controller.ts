@@ -38,7 +38,7 @@ export class ChatController {
     @Body() dto: CreateConversationDto,
     @GetUser('sub') userId: string,
   ) {
-    return this.ragChat.createConversation(userId, dto.title, dto.documentIds);
+    return this.ragChat.createConversation(userId, dto.title);
   }
 
   @ApiOperation({ summary: 'Get all conversations' })

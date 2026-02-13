@@ -19,10 +19,15 @@ services:
 
       OLLAMA_BASE_URL: http://ollama:11434
       OLLAMA_MODEL: llama3.2
+
+      REDIS_HOST: redis
+      REDIS_PORT: '6379'
     ports:
       - '3000:3000'
     depends_on:
       mongodb:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     command: >
       sh -c "
@@ -76,6 +81,18 @@ services:
     depends_on:
       mongodb:
         condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    container_name: ${PACKAGE_NAME}_redis
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:6379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   ollama:
     image: ollama/ollama:latest

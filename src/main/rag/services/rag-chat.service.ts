@@ -59,25 +59,26 @@ export class RagChatService {
       content: message,
     });
 
-    const searchResults = await this.retrieveContext(
-      conversation,
-      message,
-      userId,
-    );
+    const searchResults = await this.retrieveContext(message, userId);
     const context = searchResults.map((r) => r.chunk.content).join('\n\n');
     const prompt = this.assemblePrompt(message, context);
 
     const response = await this.ollama.generateResponse(prompt);
 
-    // Save assistant message
+    const { documentChunkIds, productChunkIds } =
+      this.splitChunkIds(searchResults);
+
     await this.messageModel.create({
       conversationId,
       userId,
       role: 'assistant',
       content: response,
-      sourceChunkIds: searchResults.map((r) => r.chunk._id),
+      sourceChunkIds: documentChunkIds,
       metadata: {
         retrievalScores: searchResults.map((r) => r.score),
+        ...(productChunkIds.length > 0 && {
+          sourceProductChunkIds: productChunkIds,
+        }),
       },
     });
 
@@ -96,7 +97,8 @@ export class RagChatService {
         sources: searchResults.map((r) => ({
           content: r.chunk.content,
           score: r.score,
-          documentId: r.chunk.documentId,
+          documentId: 'documentId' in r.chunk ? r.chunk.documentId : undefined,
+          productId: 'productId' in r.chunk ? r.chunk.productId : undefined,
         })),
       },
       'Response generated',
@@ -126,29 +128,31 @@ export class RagChatService {
       content: message,
     });
 
-    const searchResults = await this.retrieveContext(
-      conversation,
-      message,
-      userId,
-    );
+    const searchResults = await this.retrieveContext(message, userId);
     const context = searchResults.map((r) => r.chunk.content).join('\n\n');
     const prompt = this.assemblePrompt(message, context);
 
     let fullResponse = '';
 
-    // Stream response
     for await (const chunk of this.ollama.streamResponse(prompt)) {
       fullResponse += chunk;
       yield chunk;
     }
 
-    // Save assistant message
+    const { documentChunkIds, productChunkIds } =
+      this.splitChunkIds(searchResults);
+
     await this.messageModel.create({
       conversationId,
       userId,
       role: 'assistant',
       content: fullResponse,
-      sourceChunkIds: searchResults.map((r) => r.chunk._id),
+      sourceChunkIds: documentChunkIds,
+      metadata: {
+        ...(productChunkIds.length > 0 && {
+          sourceProductChunkIds: productChunkIds,
+        }),
+      },
     });
 
     // Update conversation
@@ -162,35 +166,53 @@ export class RagChatService {
   }
 
   private async retrieveContext(
-    conversation: ConversationDocument,
     message: string,
     userId: string,
-  ): Promise<Array<{ chunk: any; score: number }>> {
-    const limit = 8;
-    let searchResults =
-      conversation.documentIds.length > 0
-        ? await this.vectorSearch.searchInDocuments(
-            message,
-            conversation.documentIds.map((id) => id.toString()),
-            limit,
-          )
-        : await this.vectorSearch.searchSimilarChunks(message, userId, limit);
+  ): Promise<
+    Array<{
+      chunk: { content: string; _id: any; documentId?: any; productId?: any };
+      score: number;
+    }>
+  > {
+    const limitPerSource = 4;
+    const totalLimit = 8;
 
-    if (searchResults.length === 0 && conversation.documentIds.length > 0) {
-      searchResults = await this.vectorSearch.searchSimilarChunks(
-        message,
-        userId,
-        limit,
-      );
+    const [userResults, productResults] = await Promise.all([
+      this.vectorSearch.searchSimilarChunks(message, userId, limitPerSource),
+      this.vectorSearch.searchProductChunks(message, limitPerSource),
+    ]);
+
+    const combined = [
+      ...userResults.map((r) => ({ chunk: r.chunk, score: r.score })),
+      ...productResults.map((r) => ({ chunk: r.chunk, score: r.score })),
+    ].sort((a, b) => b.score - a.score);
+
+    return combined.slice(0, totalLimit);
+  }
+
+  private splitChunkIds(
+    results: Array<{
+      chunk: { _id: any; documentId?: any; productId?: any };
+      score: number;
+    }>,
+  ): { documentChunkIds: Types.ObjectId[]; productChunkIds: Types.ObjectId[] } {
+    const documentChunkIds: Types.ObjectId[] = [];
+    const productChunkIds: Types.ObjectId[] = [];
+    for (const r of results) {
+      if ('documentId' in r.chunk && r.chunk.documentId != null) {
+        documentChunkIds.push(r.chunk._id);
+      } else if ('productId' in r.chunk && r.chunk.productId != null) {
+        productChunkIds.push(r.chunk._id);
+      }
     }
-    return searchResults;
+    return { documentChunkIds, productChunkIds };
   }
 
   private assemblePrompt(userMessage: string, context: string): string {
     const contextBlock = context.trim()
-      ? `Context from the user's documents:\n${context}`
-      : "No relevant passages were found in the user's uploaded documents.";
-    return `You are a helpful assistant. Answer based only on the following. If there is no relevant context, say clearly that you could not find relevant information in the provided documents and suggest the user upload or check their documents.
+      ? `Context from the user's documents and product catalog:\n${context}`
+      : "No relevant passages were found in the user's documents or product catalog.";
+    return `You are a helpful assistant. Answer based only on the following. If there is no relevant context, say clearly that you could not find relevant information.
 
 ${contextBlock}
 
@@ -202,12 +224,10 @@ Answer (based on the context above, or say you found nothing relevant):`;
   async createConversation(
     userId: string,
     title: string,
-    documentIds: string[] = [],
   ): Promise<TResponse<ConversationDocument>> {
     const conversation = await this.conversationModel.create({
       userId: new Types.ObjectId(userId),
       title,
-      documentIds: documentIds.map((id) => new Types.ObjectId(id)),
       messageCount: 0,
     });
     return successResponse(conversation, 'Conversation created');

@@ -11,9 +11,6 @@ export class Conversation {
   @Prop({ required: true })
   title: string;
 
-  @Prop({ type: [{ type: Types.ObjectId, ref: 'Document' }], default: [] })
-  documentIds: Types.ObjectId[];
-
   @Prop({ default: 0 })
   messageCount: number;
 

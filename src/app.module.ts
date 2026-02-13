@@ -1,3 +1,4 @@
+import { BullModule } from '@nestjs/bullmq';
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
@@ -13,6 +14,21 @@ import { MainModule } from './main/main.module';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+    }),
+
+    BullModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: async (configService: ConfigService) => {
+        const host = configService.getOrThrow<string>(ENVEnum.REDIS_HOST);
+        const port = configService.getOrThrow<string>(ENVEnum.REDIS_PORT);
+        return {
+          connection: {
+            host,
+            port: parseInt(port, 10),
+          },
+        };
+      },
     }),
 
     PassportModule,

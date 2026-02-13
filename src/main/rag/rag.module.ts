@@ -4,6 +4,7 @@ import { DocumentsController } from './controllers/documents.controller';
 import { DocumentProcessorService } from './services/document-processor.service';
 import { EmbeddingService } from './services/embedding.service';
 import { OllamaService } from './services/ollama.service';
+import { ProductIndexingService } from './services/product-indexing.service';
 import { RagChatService } from './services/rag-chat.service';
 import { VectorSearchService } from './services/vector-search.service';
 
@@ -16,6 +17,7 @@ import { VectorSearchService } from './services/vector-search.service';
     VectorSearchService,
     DocumentProcessorService,
     RagChatService,
+    ProductIndexingService,
   ],
   exports: [
     EmbeddingService,
@@ -23,6 +25,7 @@ import { VectorSearchService } from './services/vector-search.service';
     VectorSearchService,
     DocumentProcessorService,
     RagChatService,
+    ProductIndexingService,
   ],
 })
 export class RagModule {}
