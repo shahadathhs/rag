@@ -74,7 +74,14 @@ make ollama-models
 - Copy `.env.example` to `.env` and adjust as needed.
 - **MongoDB**: `MONGODB_URI` for the app database.
 - **Redis**: Required for the product-index queue (`REDIS_HOST`, `REDIS_PORT`). In Docker, the API uses `redis:6379`.
-- **Ollama**: In Docker, the API uses `OLLAMA_BASE_URL=http://ollama:11434` (set in `compose.yaml`). For local runs, use `OLLAMA_BASE_URL=http://localhost:11434` and ensure Ollama is running and the model is pulled.
+- **Ollama**: In Docker, the API uses `OLLAMA_BASE_URL=http://ollama:11434` (set in `compose.yaml`). For local runs, use `OLLAMA_BASE_URL=http://localhost:11434` and ensure Ollama is running and the model is pulled. Set `OLLAMA_MODEL` to the model name you pull (e.g. `llama3.2`, `phi3`, `gemma2:2b`).
+- **Ollama model (low-spec devices)**: If your machine has limited RAM/CPU, use a smaller model for better speed and stability. Try one of these (pull with `ollama pull <name>`, then set `OLLAMA_MODEL=<name>` in `.env`):
+  - **phi3** (~2B) — good balance of quality and size, ~2 GB RAM.
+  - **gemma2:2b** — small, instruction-tuned; ~1.5 GB.
+  - **qwen2:0.5b** or **qwen2:1.5b** — very light; 0.5B is minimal, 1.5B a bit better.
+  - **llama3.2:1b** — smaller than default llama3.2 (3B); less RAM.
+  - **tinyllama** — 1.1B, very fast on weak hardware.
+  Larger models (e.g. llama3.2 3B, mistral 7B) give better answers but need more RAM; if you see slow responses or OOM, switch to one of the smaller models above.
 - **JWT**: `JWT_SECRET` and `JWT_EXPIRES_IN` for auth. Superadmin users (for admin/product endpoints) are seeded via the app (see seed module).
 
 ## Documentation

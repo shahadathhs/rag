@@ -233,35 +233,45 @@ export class RagChatService {
     return { documentChunkIds, productChunkIds };
   }
 
+  /** Default system prompt for RAG: clear rules and format so the model answers from context only. */
+  private static readonly RAG_SYSTEM_PROMPT = `You are a RAG assistant. You answer only from the context provided. Do not use outside knowledge or guess.
+
+Rules:
+1. Use ONLY information from the context in the user message. If the answer is in the context, give a clear, concise answer and mention the relevant details (e.g. price, description, category).
+2. Product catalog entries in the context look like: name: [Product Name] | description: ... | price: ... | sku: ... | category: ...
+   When the user asks about a product (e.g. "Smart Alarm Clock", "Sleep Tracker"), find the passage that starts with "name: [that product name]" and answer from it. Include description, price, category when present. Do not say you couldn't find it if that passage exists.
+3. Document passages are excerpts from uploaded docs. When they relate to the question, summarize or quote the relevant part. Do not invent details.
+4. Only say "I couldn't find relevant information" or "There is nothing in the context about that" when no passage in the context relates to the question. If any passage clearly matches, you must answer from it.
+5. Keep answers focused. No long intros or disclaimers unless the context is empty.`;
+
   /** Chat API: system + user messages for better instruction following. */
   private assembleChatMessages(
     userMessage: string,
     context: string,
   ): Array<{ role: 'system' | 'user'; content: string }> {
-    const systemContent = `You are a helpful assistant. You MUST answer only using the context provided in the user message.
-
-Product catalog entries in the context look like: "name: [Product Name] | description: ... | price: ... | sku: ... | category: ..."
-When the user asks about a product by name, the passage that starts with "name: [that product name]" IS the answer. Use it to describe the product (description, price, category, etc.). Do NOT say you couldn't find information if such a passage is in the context.
-
-For document passages, answer from them when they relate to the question.
-Only say you couldn't find relevant information when no passage in the context relates to the question at all.`;
-
     const userContent = context.trim()
-      ? `Context (use this to answer):\n\n${context}\n\nUser question: ${userMessage}\n\nAnswer based on the context above:`
-      : `No relevant context was found.\n\nUser question: ${userMessage}\n\nSay briefly that you couldn't find relevant information in the documents or product catalog.`;
+      ? `Context:\n\n${context}\n\n---\nQuestion: ${userMessage}\n\nAnswer from the context above:`
+      : `Context: [None]\n\nQuestion: ${userMessage}\n\nReply that you couldn't find relevant information in the provided documents or product catalog.`;
 
     return [
-      { role: 'system', content: systemContent },
+      { role: 'system', content: RagChatService.RAG_SYSTEM_PROMPT },
       { role: 'user', content: userContent },
     ];
   }
 
-  /** Single prompt for streaming (generate API). */
+  /** Single prompt for streaming (generate API). Uses same rules as system prompt inline. */
   private assemblePromptForStream(userMessage: string, context: string): string {
     const contextBlock = context.trim()
-      ? `Context (use this to answer):\n\n${context}`
-      : "No relevant passages were found.";
-    return `${contextBlock}\n\nUser question: ${userMessage}\n\nAnswer based only on the context above. For product questions, use the passage that starts with "name: [product name]". Only say you couldn't find information when no passage relates to the question.`;
+      ? `Context:\n\n${context}`
+      : 'Context: [None]';
+    return `${RagChatService.RAG_SYSTEM_PROMPT}
+
+${contextBlock}
+
+---
+Question: ${userMessage}
+
+Answer from the context above (or say you found nothing relevant if the context is empty or unrelated):`;
   }
 
   async createConversation(
