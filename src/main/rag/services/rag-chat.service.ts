@@ -260,7 +260,10 @@ Rules:
   }
 
   /** Single prompt for streaming (generate API). Uses same rules as system prompt inline. */
-  private assemblePromptForStream(userMessage: string, context: string): string {
+  private assemblePromptForStream(
+    userMessage: string,
+    context: string,
+  ): string {
     const contextBlock = context.trim()
       ? `Context:\n\n${context}`
       : 'Context: [None]';
