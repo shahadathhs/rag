@@ -32,30 +32,8 @@ export class AuthUtilsService {
   async sanitizeUser<T = UserResponseDto>(user: any): Promise<T> {
     if (!user) return null as T;
 
-    // Handle Mongoose document
     const userObj = user.toObject ? user.toObject() : user;
-
-    let profilePictureUrl = null;
-    if (
-      userObj.profilePictureId &&
-      typeof userObj.profilePictureId === 'object'
-    ) {
-      // It's populated
-      profilePictureUrl = (userObj.profilePictureId as any).url;
-      // Restore ID
-      userObj.profilePictureId = (userObj.profilePictureId as any)._id;
-    } else if (userObj.profilePicture) {
-      // If populated via virtual or manual assignment
-      profilePictureUrl = userObj.profilePicture.url;
-    }
-
-    const flatData = {
-      ...userObj,
-      profilePictureId: userObj.profilePictureId ?? null,
-      profilePictureUrl,
-    };
-
-    return plainToInstance(UserResponseDto, flatData, {
+    return plainToInstance(UserResponseDto, userObj, {
       excludeExtraneousValues: true,
     }) as T;
   }
@@ -120,17 +98,14 @@ export class AuthUtilsService {
   }
 
   async getSanitizedUserById(id: string) {
-    const user = await this.userModel.findById(id).populate('profilePictureId');
+    const user = await this.userModel.findById(id);
     if (!user) throw new Error('User not found');
 
     return this.sanitizeUser<UserResponseDto>(user);
   }
 
   async getUserByEmail(email: string) {
-    const user = await this.userModel
-      .findOne({ email })
-      .populate('profilePictureId');
-
+    const user = await this.userModel.findOne({ email });
     if (!user) return null;
 
     return this.sanitizeUser<UserResponseDto>(user);

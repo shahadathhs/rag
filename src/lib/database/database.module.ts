@@ -12,10 +12,6 @@ import {
   DocumentChunk,
   DocumentChunkSchema,
 } from './schemas/document-chunk.schema';
-import {
-  FileInstance,
-  FileInstanceSchema,
-} from './schemas/file-instance.schema';
 import { RagMessage, RagMessageSchema } from './schemas/rag-message.schema';
 import {
   RefreshToken,
@@ -36,7 +32,6 @@ import { User, UserSchema } from './schemas/user.schema';
     MongooseModule.forFeature([
       { name: User.name, schema: UserSchema },
       { name: RefreshToken.name, schema: RefreshTokenSchema },
-      { name: FileInstance.name, schema: FileInstanceSchema },
       { name: Document.name, schema: DocumentSchema },
       { name: DocumentChunk.name, schema: DocumentChunkSchema },
       { name: Conversation.name, schema: ConversationSchema },

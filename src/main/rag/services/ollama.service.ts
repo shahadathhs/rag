@@ -1,3 +1,4 @@
+import { ENVEnum } from '@/common/enum/env.enum';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
@@ -22,8 +23,10 @@ export class OllamaService {
   private readonly model: string;
 
   constructor(private readonly configService: ConfigService) {
-    this.baseUrl = this.configService.getOrThrow<string>('OLLAMA_BASE_URL');
-    this.model = this.configService.getOrThrow<string>('OLLAMA_MODEL');
+    this.baseUrl = this.configService.getOrThrow<string>(
+      ENVEnum.OLLAMA_BASE_URL,
+    );
+    this.model = this.configService.getOrThrow<string>(ENVEnum.OLLAMA_MODEL);
   }
 
   async generateResponse(prompt: string, model?: string): Promise<string> {

@@ -14,9 +14,6 @@ services:
       NODE_ENV: production
       MONGODB_URI: mongodb://root:root@mongodb:27017/${PACKAGE_NAME}_db?authSource=admin
 
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-
       BASE_URL: http://0.0.0.0:3000
       PORT: 3000
 
@@ -26,8 +23,6 @@ services:
       - '3000:3000'
     depends_on:
       mongodb:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     command: >
       sh -c "
@@ -81,28 +76,6 @@ services:
     depends_on:
       mongodb:
         condition: service_healthy
-
-  redis:
-    image: redis:8
-    container_name: ${PACKAGE_NAME}_redis
-    command:
-      [
-        'redis-server',
-        '--appendonly',
-        'yes',
-        '--bind',
-        '0.0.0.0',
-        '--protected-mode',
-        'no',
-      ]
-    ports:
-      - '127.0.0.1:6379:6379'
-    healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
-      interval: 5s
-      timeout: 3s
-      retries: 5
-    restart: always
 
   ollama:
     image: ollama/ollama:latest

@@ -32,9 +32,6 @@ export class User {
 
   @Prop()
   lastActiveAt?: Date;
-
-  @Prop({ type: String, ref: 'FileInstance' })
-  profilePictureId?: string;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

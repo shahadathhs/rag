@@ -22,22 +22,12 @@ export class UserResponseDto {
   @Expose()
   isVerified: boolean;
 
-  // ===== Logout / activity tracking =====
+  // ===== Activity =====
   @Expose()
   lastLoginAt?: Date;
 
   @Expose()
   lastActiveAt?: Date;
-
-  // ===== Avatar =====
-  @Expose()
-  profilePictureId?: string;
-
-  @Expose()
-  profilePictureUrl?: string;
-
-  @Expose()
-  avatarUrl?: string;
 
   // ===== Meta =====
   @Expose()
