@@ -204,27 +204,29 @@ sequenceDiagram
     participant API as Admin Products Controller
     participant Svc as Admin Product Service
     participant Q as Product Index Queue
-    participant Redis as Redis
+    participant Redis
     participant Worker as Product Index Worker
     participant PIS as Product Indexing Service
     participant DB as MongoDB
 
-    Admin->>API: POST /admin/products/bulk { products }
+    Admin->>API: POST /admin/products/bulk
     API->>Svc: uploadProductBulk(dtos)
-    Svc->>Q: enqueue({ data })
-    Q->>Redis: Add job
-    Svc-->>API: successResponse({ message: "Bulk upload accepted; indexing in progress" })
+    Svc->>Q: enqueue job
+    Q->>Redis: add job
+    Svc-->>API: success response
     API-->>Admin: 202 Accepted
 
-    Worker->>Redis: Poll job
-    Redis-->>Worker: Job payload
-    Worker->>PIS: index(data)
-    PIS->>DB: deleteMany ProductChunk, deleteMany Product
+    Worker->>Redis: poll job
+    Redis-->>Worker: job payload
+    Worker->>PIS: index data
+    PIS->>DB: deleteMany ProductChunk
+    PIS->>DB: deleteMany Product
     PIS->>DB: insertMany Product
+
     loop For each product
-        PIS->>PIS: productToChunkText, truncate 500 chars
+        PIS->>PIS: productToChunkText
         PIS->>PIS: generateEmbedding
-        PIS->>DB: Create ProductChunk
+        PIS->>DB: create ProductChunk
     end
 ```
 
