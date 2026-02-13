@@ -252,19 +252,21 @@ sequenceDiagram
     participant PIS as Product Indexing Service
     participant DB as MongoDB
 
-    Admin->>API: POST /admin/products/bulk/add
-    API->>Svc: uploadProductBulkAdd(dtos)
-    Svc->>Q: enqueue({ data, replace: false })
+    Admin->>API: POST bulk add
+    API->>Svc: uploadProductBulkAdd
+    Svc->>Q: enqueue job replace false
     Q->>Redis: add job
     Svc-->>API: success response
     API-->>Admin: 202 Accepted
 
     Worker->>Redis: poll job
-    Redis-->>Worker: job payload (replace: false)
-    Worker->>PIS: addMany(data)
-    PIS->>DB: insertMany Product (append; no delete)
+    Redis-->>Worker: job payload replace false
+    Worker->>PIS: addMany
+    PIS->>DB: insertMany Product append
+
     loop For each new product
-        PIS->>PIS: productToChunkText, generateEmbedding
+        PIS->>PIS: productToChunkText
+        PIS->>PIS: generateEmbedding
         PIS->>DB: create ProductChunk
     end
 ```

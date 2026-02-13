@@ -210,15 +210,17 @@ export class RagChatService {
 
   private assemblePrompt(userMessage: string, context: string): string {
     const contextBlock = context.trim()
-      ? `Context from the user's documents and product catalog:\n${context}`
+      ? `The following passages were retrieved as relevant (documents and product catalog):\n\n${context}`
       : "No relevant passages were found in the user's documents or product catalog.";
-    return `You are a helpful assistant. Answer based only on the following. If there is no relevant context, say clearly that you could not find relevant information.
+    return `You are a helpful assistant. Use ONLY the context below to answer the user's question.
+
+IMPORTANT: If any passage in the context clearly relates to or answers the question, you MUST answer from that passage. Only say "I couldn't find relevant information" when no passage in the context relates to the question at all.
 
 ${contextBlock}
 
 User question: ${userMessage}
 
-Answer (based on the context above, or say you found nothing relevant):`;
+Answer using the context above when it is relevant. If nothing in the context relates to the question, say so briefly.`;
   }
 
   async createConversation(
