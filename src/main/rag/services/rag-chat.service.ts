@@ -1,3 +1,12 @@
+import type { PaginationDto } from '@/common/dto/pagination.dto';
+import type {
+  TPaginatedResponse,
+  TResponse,
+} from '@/common/utils/response.util';
+import {
+  successPaginatedResponse,
+  successResponse,
+} from '@/common/utils/response.util';
 import { AppError } from '@/core/error/handle-error.app';
 import { HandleError } from '@/core/error/handle-error.decorator';
 import {
@@ -13,15 +22,6 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { OllamaService } from './ollama.service';
 import { VectorSearchService } from './vector-search.service';
-import {
-  successResponse,
-  successPaginatedResponse,
-} from '@/common/utils/response.util';
-import type {
-  TResponse,
-  TPaginatedResponse,
-} from '@/common/utils/response.util';
-import type { PaginationDto } from '@/common/dto/pagination.dto';
 
 @Injectable()
 export class RagChatService {
@@ -60,13 +60,16 @@ export class RagChatService {
     });
 
     const searchResults = await this.retrieveContext(message, userId);
-    const context = searchResults.map((r) => r.chunk.content).join('\n\n');
-    const prompt = this.assemblePrompt(message, context);
+    const { context, resultsForResponse } =
+      this.buildContextForPrompt(searchResults);
+    const messages = this.assembleChatMessages(message, context);
 
-    const response = await this.ollama.generateResponse(prompt);
+    const response = await this.ollama.generateChatResponse(messages);
+
+    this.logger.log('Response:', response);
 
     const { documentChunkIds, productChunkIds } =
-      this.splitChunkIds(searchResults);
+      this.splitChunkIds(resultsForResponse);
 
     await this.messageModel.create({
       conversationId,
@@ -75,7 +78,7 @@ export class RagChatService {
       content: response,
       sourceChunkIds: documentChunkIds,
       metadata: {
-        retrievalScores: searchResults.map((r) => r.score),
+        retrievalScores: resultsForResponse.map((r) => r.score),
         ...(productChunkIds.length > 0 && {
           sourceProductChunkIds: productChunkIds,
         }),
@@ -94,7 +97,7 @@ export class RagChatService {
     return successResponse(
       {
         response,
-        sources: searchResults.map((r) => ({
+        sources: resultsForResponse.map((r) => ({
           content: r.chunk.content,
           score: r.score,
           documentId: 'documentId' in r.chunk ? r.chunk.documentId : undefined,
@@ -129,8 +132,9 @@ export class RagChatService {
     });
 
     const searchResults = await this.retrieveContext(message, userId);
-    const context = searchResults.map((r) => r.chunk.content).join('\n\n');
-    const prompt = this.assemblePrompt(message, context);
+    const { context, resultsForResponse } =
+      this.buildContextForPrompt(searchResults);
+    const prompt = this.assemblePromptForStream(message, context);
 
     let fullResponse = '';
 
@@ -139,8 +143,10 @@ export class RagChatService {
       yield chunk;
     }
 
+    this.logger.log('Full response:', fullResponse);
+
     const { documentChunkIds, productChunkIds } =
-      this.splitChunkIds(searchResults);
+      this.splitChunkIds(resultsForResponse);
 
     await this.messageModel.create({
       conversationId,
@@ -163,6 +169,25 @@ export class RagChatService {
         lastMessageAt: new Date(),
       },
     );
+  }
+
+  /** Keep only passages above relevance threshold so the model isn't confused by weak matches. */
+  private buildContextForPrompt(
+    searchResults: Array<{
+      chunk: { content: string; _id: any; documentId?: any; productId?: any };
+      score: number;
+    }>,
+  ): {
+    context: string;
+    resultsForResponse: typeof searchResults;
+  } {
+    const minScore = 0.28;
+    const filtered =
+      searchResults.length > 0 && searchResults[0].score >= minScore
+        ? searchResults.filter((r) => r.score >= minScore)
+        : searchResults;
+    const context = filtered.map((r) => r.chunk.content).join('\n\n');
+    return { context, resultsForResponse: filtered };
   }
 
   private async retrieveContext(
@@ -208,19 +233,35 @@ export class RagChatService {
     return { documentChunkIds, productChunkIds };
   }
 
-  private assemblePrompt(userMessage: string, context: string): string {
+  /** Chat API: system + user messages for better instruction following. */
+  private assembleChatMessages(
+    userMessage: string,
+    context: string,
+  ): Array<{ role: 'system' | 'user'; content: string }> {
+    const systemContent = `You are a helpful assistant. You MUST answer only using the context provided in the user message.
+
+Product catalog entries in the context look like: "name: [Product Name] | description: ... | price: ... | sku: ... | category: ..."
+When the user asks about a product by name, the passage that starts with "name: [that product name]" IS the answer. Use it to describe the product (description, price, category, etc.). Do NOT say you couldn't find information if such a passage is in the context.
+
+For document passages, answer from them when they relate to the question.
+Only say you couldn't find relevant information when no passage in the context relates to the question at all.`;
+
+    const userContent = context.trim()
+      ? `Context (use this to answer):\n\n${context}\n\nUser question: ${userMessage}\n\nAnswer based on the context above:`
+      : `No relevant context was found.\n\nUser question: ${userMessage}\n\nSay briefly that you couldn't find relevant information in the documents or product catalog.`;
+
+    return [
+      { role: 'system', content: systemContent },
+      { role: 'user', content: userContent },
+    ];
+  }
+
+  /** Single prompt for streaming (generate API). */
+  private assemblePromptForStream(userMessage: string, context: string): string {
     const contextBlock = context.trim()
-      ? `The following passages were retrieved as relevant (documents and product catalog):\n\n${context}`
-      : "No relevant passages were found in the user's documents or product catalog.";
-    return `You are a helpful assistant. Use ONLY the context below to answer the user's question.
-
-IMPORTANT: If any passage in the context clearly relates to or answers the question, you MUST answer from that passage. Only say "I couldn't find relevant information" when no passage in the context relates to the question at all.
-
-${contextBlock}
-
-User question: ${userMessage}
-
-Answer using the context above when it is relevant. If nothing in the context relates to the question, say so briefly.`;
+      ? `Context (use this to answer):\n\n${context}`
+      : "No relevant passages were found.";
+    return `${contextBlock}\n\nUser question: ${userMessage}\n\nAnswer based only on the context above. For product questions, use the passage that starts with "name: [product name]". Only say you couldn't find information when no passage relates to the question.`;
   }
 
   async createConversation(

@@ -9,6 +9,17 @@ interface OllamaResponse {
   done: boolean;
 }
 
+interface OllamaChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+interface OllamaChatResponse {
+  model: string;
+  message: { role: string; content: string };
+  done: boolean;
+}
+
 interface OllamaStreamChunk {
   model: string;
   created_at: string;
@@ -49,6 +60,52 @@ export class OllamaService {
 
       const data: OllamaResponse = await response.json();
       return data.response;
+    } catch (error) {
+      const err = error as NodeJS.ErrnoException & {
+        cause?: { code?: string };
+      };
+      const isRefused =
+        err?.cause?.code === 'ECONNREFUSED' || err?.code === 'ECONNREFUSED';
+      if (isRefused) {
+        this.logger.error(
+          `Cannot connect to Ollama at ${this.baseUrl}. ` +
+            'Ensure Ollama is running and OLLAMA_BASE_URL is set correctly (e.g. http://ollama:11434 in Docker).',
+        );
+      } else {
+        this.logger.error('Failed to generate response from Ollama', error);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Generate using chat API (system + user). Better instruction following for RAG.
+   */
+  async generateChatResponse(
+    messages: OllamaChatMessage[],
+    model?: string,
+  ): Promise<string> {
+    const modelToUse = model || this.model;
+
+    try {
+      const response = await fetch(`${this.baseUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: modelToUse,
+          messages,
+          stream: false,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Ollama API error: ${response.statusText}`);
+      }
+
+      const data: OllamaChatResponse = await response.json();
+      this.logger.log('Chat response:', data);
+
+      return data.message?.content ?? '';
     } catch (error) {
       const err = error as NodeJS.ErrnoException & {
         cause?: { code?: string };
